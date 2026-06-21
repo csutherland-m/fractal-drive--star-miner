@@ -1,0 +1,47 @@
+[gd_scene format=3 uid="uid://bcv8277vbxx53"]
+
+[ext_resource type="Script" uid="uid://cfkar31ajqq5y" path="res://Scripts/FlightTest.gd" id="1_7tra8"]
+[ext_resource type="Texture2D" uid="uid://b71mnhk05b3uw" path="res://Sprites/Vehicles/MinerRocket256-1.png.png" id="1_u4xvq"]
+[ext_resource type="Script" uid="uid://dyx6o0e0qd0jb" path="res://Scripts/Starfield.gd" id="2_uhk6a"]
+[ext_resource type="Script" uid="uid://cfsa8fo8rjiwk" path="res://Scripts/AsteroidSpawner.gd" id="3_hqieb"]
+[ext_resource type="PackedScene" uid="uid://b2yigfjj8m4jt" path="res://Scenes/UI/PauseMenu.tscn" id="5_scco0"]
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_7tra8"]
+
+[node name="FlightTest" type="Node2D" unique_id=1562977409]
+script = ExtResource("1_7tra8")
+
+[node name="Starfield" type="Node2D" parent="." unique_id=287411099]
+script = ExtResource("2_uhk6a")
+cluster_count = 10
+cluster_spread = 300.0
+random_star_ratio = 0.25
+max_star_size = 2.2
+blink_speed_min = 0.25
+blink_speed_max = 1.6
+blink_strength = 0.25
+star_drift_speed = Vector2(0, 0)
+edge_respawn_margin = 40.0
+
+[node name="AsteroidSpawner" type="Node2D" parent="." unique_id=1434620601]
+script = ExtResource("3_hqieb")
+large_asteroid_count = 1
+debris_min_speed = 1.0
+debris_max_speed = 2.0
+asteroid_scroll_multiplier = 0.75
+max_small_debris = 6
+large_asteroid_spawn_chance = 0.1
+offscreen_spawn_margin = 180.0
+
+[node name="PlayerShip" type="Area2D" parent="." unique_id=583142554]
+position = Vector2(960, 540)
+scale = Vector2(0.4, 0.4)
+
+[node name="ShipSprite" type="Sprite2D" parent="PlayerShip" unique_id=435639723]
+texture = ExtResource("1_u4xvq")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="PlayerShip" unique_id=398388599]
+scale = Vector2(0.99999994, 0.99999994)
+shape = SubResource("CircleShape2D_7tra8")
+
+[node name="PauseMenu" parent="." unique_id=705735553 instance=ExtResource("5_scco0")]
