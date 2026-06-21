@@ -46,7 +46,7 @@ func _draw() -> void:
 	draw_arc(Vector2.ZERO, radius * 0.7, 0, PI * 1.4, 12, Color("#4A4A4A"), 2.0)
 
 
-func _on_body_entered(body: Node) -> void:
+func _on_body_entered(_body: Node) -> void:
 	pass
 
 
@@ -54,7 +54,7 @@ func _on_area_entered(area: Area2D) -> void:
 	if area.name == "PlayerShip":
 		if is_mineable:
 			print("Landed on asteroid. Returning to main menu.")
-			get_tree().change_scene_to_file("res://Scenes/AsteroidMining.tscn")
+			get_tree().call_deferred("change_scene_to_file", "res://Scenes/AsteroidMining.tscn")
 		else:
 			print("Ship hit debris for %d damage." % damage)
 			queue_free()

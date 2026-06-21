@@ -52,6 +52,7 @@ centered = false
 
 [node name="MenuRoot" type="Control" parent="MenuUI" unique_id=1519717177]
 layout_mode = 3
+anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2

@@ -8,7 +8,9 @@ This is the Codex working copy of the Godot project.
 - Play starts the flight test scene.
 - The player ship stays centered while the starfield and asteroids scroll.
 - Large mineable asteroids send the player to the asteroid mining scene.
-- The asteroid mining scene has first-pass movement, gravity, collision, and one-block mining.
+- The asteroid mining scene has movement, gravity, collision, fuel, cargo, fog of war, and one-block mining.
+- The mining map extends downward as the player descends, with a camera follow and nearby tile reveal.
+- The mining surface has a gray shop box where the player sells ore, stores ore in a warehouse, refuels, and buys upgrades.
 
 ## Main Scenes
 
@@ -33,6 +35,14 @@ This is the Codex working copy of the Godot project.
 - `A/D` or arrow keys: move.
 - `W` or up arrow: thrust upward like a small rocket.
 - Hold movement toward a block to mine it. Blocks have hardness/HP, and the drill deals damage over time.
+- Dirt and rock do not take cargo space.
+- Ore fills cargo. Starting cargo capacity is 10 items.
+- Fuel lasts for 60 seconds of movement.
+- A fuel bar across the top of the screen shows remaining fuel.
+- The player starts with 100 gold coins.
+- Refueling costs 2 gold coins per started 10 seconds of missing fuel.
+- Touch the gray shop box above the surface to sell ore, store ore in the warehouse, refuel, and buy the first drill and sensor upgrades.
+- Warehouse ore is safe from cargo selling and can still be used for upgrades.
 - `Esc`: pause.
 
 ## Recommended Next Step
@@ -40,6 +50,6 @@ This is the Codex working copy of the Godot project.
 Improve the mining prototype:
 
 1. Add better mining feel and feedback.
-2. Add resource values and inventory rules.
+2. Add clearer shop feedback and button states.
 3. Add a way to return from the mining scene to flight.
-4. Add a simple upgrade purchase.
+4. Add more upgrade tiers for fuel, cargo, drill, and sensors.

@@ -17,8 +17,6 @@ texture_region_size = Vector2i(64, 64)
 0:2/0 = 0
 1:2/0 = 0
 2:2/0 = 0
-124:100/0 = 0
-
 [sub_resource type="TileSet" id="TileSet_1bgp2"]
 tile_size = Vector2i(64, 64)
 sources/0 = SubResource("TileSetAtlasSource_1qlup")
@@ -33,7 +31,7 @@ tile_set = SubResource("TileSet_1bgp2")
 [node name="PlayerMarker" type="Sprite2D" parent="MineTiles" unique_id=1933023010]
 z_index = 10
 position = Vector2(960, 20)
-scale = Vector2(0.25, 0.25)
+scale = Vector2(0.39, 0.39)
 texture = ExtResource("3_pwvc8")
 
 [node name="PauseMenu" parent="." unique_id=705735553 instance=ExtResource("2_mpbvu")]
