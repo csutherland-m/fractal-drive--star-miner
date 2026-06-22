@@ -36,8 +36,15 @@ enum BlockType {
 @export var empty_top_rows: int = 4
 @export var generation_buffer_rows: int = 12
 @export var reveal_radius_tiles: int = 1
+@export var surface_revealed_ground_rows: int = 2
 @export var max_fuel_seconds: float = 60.0
+@export var fuel_warning_ratio: float = 0.3
 @export var inventory_capacity: int = 10
+@export var shop_lander_texture_path: String = "res://Sprites/Vehicles/RocketLanderEdited.png"
+@export var shop_lander_scale: float = 0.75
+@export var shop_lander_bottom_padding_pixels: float = 14.0
+@export var shop_lander_ground_overlap_pixels: float = 3.0
+@export var shop_lander_surface_column: int = 5
 
 @export var gravity: float = 900.0
 @export var max_fall_speed: float = 500.0
@@ -64,6 +71,7 @@ enum BlockType {
 @export var sensor_upgrade_coin_cost: int = 15
 @export var starting_gold: int = 100
 @export var refuel_gold_cost_per_10_seconds: int = 2
+@export var arrival_countdown_seconds: int = 3
 @export var dirt_hardness: float = 0.735
 @export var copper_hardness: float = 1.75
 @export var iron_hardness: float = 1.75
@@ -78,6 +86,7 @@ var is_paused: bool = false
 var is_shop_open: bool = false
 var is_shop_reentry_locked: bool = false
 var is_game_over: bool = false
+var is_arrival_countdown_active: bool = false
 var is_on_ground: bool = false
 var player_velocity: Vector2 = Vector2.ZERO
 var last_mine_direction: Vector2i = Vector2i.DOWN
@@ -88,14 +97,18 @@ var warehouse_resources: Dictionary = {}
 var coins: int = 100
 var fuel_seconds: float = 60.0
 var hud_label: Label
-var fuel_bar: ProgressBar
-var shop_button: Polygon2D
+var fuel_bar: Control
+var fuel_bar_fill: ColorRect
+var fuel_bar_segments: Array[ColorRect] = []
+var fuel_warning_blink_time: float = 0.0
+var shop_button: Sprite2D
 var shop_center_position: Vector2 = Vector2.ZERO
 var shop_size: Vector2 = Vector2(192.0, 64.0)
 var shop_panel: Panel
 var shop_status_label: Label
 var refuel_button: Button
 var game_over_label: Label
+var countdown_label: Label
 var mining_camera: Camera2D
 var fog_overlay: Node2D
 var mining_blink_overlay: Polygon2D
@@ -131,11 +144,12 @@ func _ready() -> void:
 
 
 func _physics_process(delta: float) -> void:
-	if is_paused:
+	if is_paused or is_arrival_countdown_active:
 		return
 	
 	handle_player_movement(delta)
 	drain_fuel_for_movement(delta)
+	update_fuel_bar(delta)
 	check_shop_collision()
 	ensure_world_generated_near_player()
 	update_camera()
@@ -252,7 +266,8 @@ func get_tile_coords_for_block_type(block_type: BlockType) -> Vector2i:
 
 
 func position_player_in_sky() -> void:
-	var start_cell := Vector2i(floori(float(grid_width) / 2.0), empty_top_rows - 2)
+	var center_column := floori(float(grid_width) / 2.0)
+	var start_cell := Vector2i(center_column, empty_top_rows - 2)
 	player_marker.position = mine_tiles.map_to_local(start_cell)
 	player_marker.scale = Vector2(player_sprite_scale, player_sprite_scale)
 	target_player_rotation = get_rotation_for_mine_direction(Vector2i.DOWN)
@@ -262,20 +277,31 @@ func position_player_in_sky() -> void:
 
 
 func create_surface_shop() -> void:
-	var shop_cell := Vector2i(floori(float(grid_width) / 2.0), empty_top_rows - 3)
-	shop_center_position = mine_tiles.map_to_local(shop_cell)
+	var shop_texture := load(shop_lander_texture_path) as Texture2D
+	var lander_column := clampi(shop_lander_surface_column, 0, grid_width - 1)
+	var first_ground_cell := Vector2i(lander_column, get_first_ground_row())
+	var first_ground_center := mine_tiles.map_to_local(first_ground_cell)
+	var ground_top_y := first_ground_center.y - 32.0
+	var lander_height := 192.0
 	
-	shop_button = Polygon2D.new()
+	if shop_texture != null:
+		lander_height = shop_texture.get_height() * shop_lander_scale
+	
+	var lander_ground_offset := (
+		shop_lander_bottom_padding_pixels * shop_lander_scale
+		+ shop_lander_ground_overlap_pixels
+	)
+	shop_center_position = Vector2(
+		first_ground_center.x,
+		ground_top_y - lander_height * 0.5 + lander_ground_offset
+	)
+	
+	shop_button = Sprite2D.new()
 	shop_button.name = "SurfaceShop"
 	shop_button.z_index = 7
-	shop_button.color = Color("#777777")
 	shop_button.position = shop_center_position
-	shop_button.polygon = PackedVector2Array([
-		Vector2(-shop_size.x * 0.5, -shop_size.y * 0.5),
-		Vector2(shop_size.x * 0.5, -shop_size.y * 0.5),
-		Vector2(shop_size.x * 0.5, shop_size.y * 0.5),
-		Vector2(-shop_size.x * 0.5, shop_size.y * 0.5),
-	])
+	shop_button.texture = shop_texture
+	shop_button.scale = Vector2(shop_lander_scale, shop_lander_scale)
 	mine_tiles.add_child(shop_button)
 
 
@@ -298,6 +324,10 @@ func check_shop_collision() -> void:
 
 func get_shop_rect() -> Rect2:
 	return Rect2(shop_center_position - shop_size * 0.5, shop_size)
+
+
+func get_first_ground_row() -> int:
+	return empty_top_rows
 
 
 func get_player_rect(test_position: Vector2) -> Rect2:
@@ -369,6 +399,7 @@ func get_player_cell() -> Vector2i:
 
 func update_revealed_cells() -> void:
 	var player_cell := get_player_cell()
+	reveal_surface_ground_cells()
 	
 	for y in range(player_cell.y - reveal_radius_tiles, player_cell.y + reveal_radius_tiles + 1):
 		for x in range(player_cell.x - reveal_radius_tiles, player_cell.x + reveal_radius_tiles + 1):
@@ -384,6 +415,15 @@ func update_revealed_cells() -> void:
 	
 	if fog_overlay != null:
 		fog_overlay.queue_redraw()
+
+
+func reveal_surface_ground_cells() -> void:
+	var first_ground_row := get_first_ground_row()
+	var last_surface_row := first_ground_row + maxi(surface_revealed_ground_rows, 1) - 1
+	
+	for y in range(first_ground_row, last_surface_row + 1):
+		for x in range(grid_width):
+			revealed_cells[Vector2i(x, y)] = true
 
 
 func is_cell_revealed(cell: Vector2i) -> bool:
@@ -1123,11 +1163,56 @@ func create_game_over_ui() -> void:
 	game_over_layer.add_child(game_over_label)
 
 
+func create_arrival_countdown_ui() -> void:
+	var countdown_layer := CanvasLayer.new()
+	countdown_layer.name = "ArrivalCountdownUI"
+	add_child(countdown_layer)
+	
+	countdown_label = Label.new()
+	countdown_label.anchor_left = 0.5
+	countdown_label.anchor_right = 0.5
+	countdown_label.anchor_top = 0.5
+	countdown_label.anchor_bottom = 0.5
+	countdown_label.offset_left = -220.0
+	countdown_label.offset_right = 220.0
+	countdown_label.offset_top = -100.0
+	countdown_label.offset_bottom = 100.0
+	countdown_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	countdown_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	countdown_label.add_theme_font_size_override("font_size", 92)
+	countdown_label.visible = false
+	countdown_layer.add_child(countdown_label)
+
+
+func start_arrival_countdown() -> void:
+	is_arrival_countdown_active = true
+	player_velocity = Vector2.ZERO
+	reset_mining_progress()
+	
+	if countdown_label != null:
+		countdown_label.visible = true
+	
+	for count in range(arrival_countdown_seconds, 0, -1):
+		if countdown_label != null:
+			countdown_label.text = str(count)
+		await get_tree().create_timer(1.0).timeout
+	
+	if countdown_label != null:
+		countdown_label.text = "GO"
+	await get_tree().create_timer(0.45).timeout
+	
+	if countdown_label != null:
+		countdown_label.visible = false
+	
+	is_arrival_countdown_active = false
+
+
 func trigger_game_over() -> void:
 	if is_game_over:
 		return
 	
 	is_game_over = true
+	is_arrival_countdown_active = false
 	is_shop_open = false
 	is_paused = true
 	player_velocity = Vector2.ZERO
@@ -1135,6 +1220,9 @@ func trigger_game_over() -> void:
 	
 	if shop_panel != null:
 		shop_panel.visible = false
+	
+	if countdown_label != null:
+		countdown_label.visible = false
 	
 	if game_over_label != null:
 		game_over_label.visible = true
@@ -1154,7 +1242,7 @@ func create_hud() -> void:
 	fuel_bar_label.add_theme_font_size_override("font_size", 18)
 	hud_layer.add_child(fuel_bar_label)
 	
-	fuel_bar = ProgressBar.new()
+	fuel_bar = Control.new()
 	fuel_bar.name = "FuelBar"
 	fuel_bar.anchor_left = 0.0
 	fuel_bar.anchor_right = 1.0
@@ -1162,11 +1250,24 @@ func create_hud() -> void:
 	fuel_bar.offset_right = -24.0
 	fuel_bar.offset_top = 12.0
 	fuel_bar.offset_bottom = 34.0
-	fuel_bar.min_value = 0.0
-	fuel_bar.max_value = max_fuel_seconds
-	fuel_bar.value = fuel_seconds
-	fuel_bar.show_percentage = false
+	fuel_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud_layer.add_child(fuel_bar)
+	
+	var fuel_bar_background := ColorRect.new()
+	fuel_bar_background.name = "FuelBarBackground"
+	fuel_bar_background.color = Color(0.02, 0.05, 0.06, 0.82)
+	fuel_bar_background.anchor_right = 1.0
+	fuel_bar_background.anchor_bottom = 1.0
+	fuel_bar.add_child(fuel_bar_background)
+	
+	fuel_bar_fill = ColorRect.new()
+	fuel_bar_fill.name = "FuelBarFill"
+	fuel_bar_fill.color = Color(0.0, 0.75, 0.86, 0.95)
+	fuel_bar_fill.offset_left = 2.0
+	fuel_bar_fill.offset_top = 2.0
+	fuel_bar_fill.offset_bottom = -2.0
+	fuel_bar.add_child(fuel_bar_fill)
+	rebuild_fuel_bar_segments()
 	
 	hud_label = Label.new()
 	hud_label.position = Vector2(24, 52)
@@ -1174,13 +1275,62 @@ func create_hud() -> void:
 	hud_layer.add_child(hud_label)
 
 
+func rebuild_fuel_bar_segments() -> void:
+	for segment in fuel_bar_segments:
+		if segment != null:
+			segment.queue_free()
+	
+	fuel_bar_segments.clear()
+	
+	if fuel_bar == null:
+		return
+	
+	var segment_count: int = maxi(ceili(max_fuel_seconds / 10.0), 1)
+	
+	for i in range(1, segment_count):
+		var segment := ColorRect.new()
+		segment.name = "FuelSegment%d" % i
+		segment.color = Color(0.78, 1.0, 1.0, 0.72)
+		segment.size = Vector2(2.0, 18.0)
+		fuel_bar.add_child(segment)
+		fuel_bar_segments.append(segment)
+
+
+func update_fuel_bar(delta: float = 0.0) -> void:
+	if fuel_bar == null or fuel_bar_fill == null:
+		return
+	
+	var segment_count: int = maxi(ceili(max_fuel_seconds / 10.0), 1)
+	if fuel_bar_segments.size() != segment_count - 1:
+		rebuild_fuel_bar_segments()
+	
+	var fuel_ratio: float = clampf(fuel_seconds / maxf(max_fuel_seconds, 0.01), 0.0, 1.0)
+	var inner_width: float = maxf(fuel_bar.size.x - 4.0, 0.0)
+	fuel_bar_fill.size = Vector2(inner_width * fuel_ratio, maxf(fuel_bar.size.y - 4.0, 0.0))
+	
+	var fill_color := Color(0.0, 0.75, 0.86, 0.95)
+	
+	if fuel_ratio <= fuel_warning_ratio:
+		fuel_warning_blink_time += delta
+		var warning_alpha: float = 0.45 + 0.5 * absf(sin(fuel_warning_blink_time * 7.5))
+		fill_color = Color(1.0, 0.05, 0.03, warning_alpha)
+	else:
+		fuel_warning_blink_time = 0.0
+	
+	fuel_bar_fill.color = fill_color
+	
+	for i in fuel_bar_segments.size():
+		var segment := fuel_bar_segments[i]
+		var x_position: float = ((float(i) + 1.0) / float(segment_count)) * fuel_bar.size.x
+		segment.position = Vector2(x_position - 1.0, 2.0)
+		segment.size = Vector2(2.0, maxf(fuel_bar.size.y - 4.0, 0.0))
+
+
 func update_hud() -> void:
 	if hud_label == null:
 		return
 	
-	if fuel_bar != null:
-		fuel_bar.max_value = max_fuel_seconds
-		fuel_bar.value = clampf(fuel_seconds, 0.0, max_fuel_seconds)
+	update_fuel_bar()
 	
 	var resource_lines: Array[String] = []
 	
@@ -1232,7 +1382,7 @@ func _draw() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if is_game_over:
+	if is_game_over or is_arrival_countdown_active:
 		return
 	
 	if event.is_action_pressed("ui_cancel"):

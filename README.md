@@ -6,11 +6,12 @@ This is the Codex working copy of the Godot project.
 
 - Main menu loads first.
 - Play starts the flight test scene.
-- The player ship stays centered while the starfield and asteroids scroll.
-- Large mineable asteroids send the player to the asteroid mining scene.
+- The player starship stays centered while the starfield and asteroids scroll.
+- The starship uses side-profile art, slowly rotates toward its travel direction, mirrors to stay upright, and has a visible engine flame.
+- Large mineable asteroids trigger a short orbit-and-lander cutscene before the asteroid mining scene.
 - The asteroid mining scene has movement, gravity, collision, fuel, cargo, fog of war, and one-block mining.
-- The mining map extends downward as the player descends, with a camera follow and nearby tile reveal.
-- The mining surface has a gray shop box where the player sells ore, stores ore in a warehouse, refuels, and buys upgrades.
+- The mining map extends downward as the player descends, with a camera follow, nearby tile reveal, and visible starting surface layers.
+- The mining surface has a landed shop ship resting on the left side of the first ground layer, while the miner starts centered.
 
 ## Main Scenes
 
@@ -30,6 +31,12 @@ This is the Codex working copy of the Godot project.
 - `Scripts/PauseMenu.gd`: shared pause menu signals.
 - `Scripts/GameTheme.gd`: button styling.
 
+## Flight Test Controls
+
+- `W/A/S/D`: main thrust direction.
+- `Q/E`: strafe left or right.
+- `Esc`: pause.
+
 ## Mining Test Controls
 
 - `A/D` or arrow keys: move.
@@ -38,10 +45,10 @@ This is the Codex working copy of the Godot project.
 - Dirt and rock do not take cargo space.
 - Ore fills cargo. Starting cargo capacity is 10 items.
 - Fuel lasts for 60 seconds of movement.
-- A fuel bar across the top of the screen shows remaining fuel.
+- A segmented teal fuel bar across the top of the screen shows remaining fuel in 10-second chunks and blinks red below 30 percent.
 - The player starts with 100 gold coins.
 - Refueling costs 2 gold coins per started 10 seconds of missing fuel.
-- Touch the gray shop box above the surface to sell ore, store ore in the warehouse, refuel, and buy the first drill and sensor upgrades.
+- Touch the lander above the surface to sell ore, store ore in the warehouse, refuel, and buy the first drill and sensor upgrades.
 - Warehouse ore is safe from cargo selling and can still be used for upgrades.
 - `Esc`: pause.
 

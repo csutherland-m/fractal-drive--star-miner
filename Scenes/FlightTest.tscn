@@ -1,7 +1,7 @@
 [gd_scene format=3 uid="uid://bcv8277vbxx53"]
 
 [ext_resource type="Script" uid="uid://cfkar31ajqq5y" path="res://Scripts/FlightTest.gd" id="1_7tra8"]
-[ext_resource type="Texture2D" uid="uid://b71mnhk05b3uw" path="res://Sprites/Vehicles/MinerRocket256-1.png.png" id="1_u4xvq"]
+[ext_resource type="Texture2D" path="res://Sprites/Vehicles/StarShipSideEdited.png" id="1_u4xvq"]
 [ext_resource type="Script" uid="uid://dyx6o0e0qd0jb" path="res://Scripts/Starfield.gd" id="2_uhk6a"]
 [ext_resource type="Script" uid="uid://cfsa8fo8rjiwk" path="res://Scripts/AsteroidSpawner.gd" id="3_hqieb"]
 [ext_resource type="PackedScene" uid="uid://b2yigfjj8m4jt" path="res://Scenes/UI/PauseMenu.tscn" id="5_scco0"]

@@ -53,8 +53,10 @@ func _on_body_entered(_body: Node) -> void:
 func _on_area_entered(area: Area2D) -> void:
 	if area.name == "PlayerShip":
 		if is_mineable:
-			print("Landed on asteroid. Returning to main menu.")
-			get_tree().call_deferred("change_scene_to_file", "res://Scenes/AsteroidMining.tscn")
+			var current_scene := get_tree().current_scene
+			
+			if current_scene != null and current_scene.has_method("begin_mining_approach"):
+				current_scene.begin_mining_approach(self)
 		else:
 			print("Ship hit debris for %d damage." % damage)
 			queue_free()
