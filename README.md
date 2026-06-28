@@ -43,7 +43,8 @@ This is the Codex working copy of the Godot project.
 - `W` or up arrow: thrust upward like a small rocket.
 - Hold movement toward a block to mine it. Blocks have hardness/HP, and the drill deals damage over time.
 - Dirt and rock do not take cargo space.
-- Ore fills cargo. Starting cargo capacity is 10 items.
+- Ore and raw fuel fill cargo. Starting cargo capacity is 10 items.
+- Raw fuel is a coal-tinted dirt-style block that appears more often than iron but less often than copper.
 - Fuel lasts for 60 seconds of movement.
 - A segmented teal fuel bar across the top of the screen shows remaining fuel in 10-second chunks and blinks red below 30 percent.
 - The player starts with 100 gold coins.

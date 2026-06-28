@@ -4,6 +4,7 @@
 [ext_resource type="Texture2D" uid="uid://fjvh3f3tsiu" path="res://Sprites/TileSets/MiningTiles.png" id="2_3yq2h"]
 [ext_resource type="PackedScene" uid="uid://b2yigfjj8m4jt" path="res://Scenes/UI/PauseMenu.tscn" id="2_mpbvu"]
 [ext_resource type="Texture2D" uid="uid://b71mnhk05b3uw" path="res://Sprites/Vehicles/MinerRocket256-1.png.png" id="3_pwvc8"]
+[ext_resource type="Script" uid="uid://dyx6o0e0qd0jb" path="res://Scripts/Starfield.gd" id="4_t7r4u"]
 
 [sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_1qlup"]
 texture = ExtResource("2_3yq2h")
@@ -11,6 +12,7 @@ texture_region_size = Vector2i(64, 64)
 0:0/0 = 0
 1:0/0 = 0
 2:0/0 = 0
+3:0/0 = 0
 2:1/0 = 0
 1:1/0 = 0
 0:1/0 = 0
@@ -23,6 +25,19 @@ sources/0 = SubResource("TileSetAtlasSource_1qlup")
 
 [node name="AsteroidMining" type="Node2D" unique_id=1605487641]
 script = ExtResource("1_8b7qf")
+
+[node name="Starfield" type="Node2D" parent="." unique_id=1379204962]
+z_index = -100
+script = ExtResource("4_t7r4u")
+cluster_count = 10
+cluster_spread = 300.0
+random_star_ratio = 0.25
+max_star_size = 2.2
+blink_speed_min = 0.25
+blink_speed_max = 1.6
+blink_strength = 0.25
+star_drift_speed = Vector2(-5, 0)
+edge_respawn_margin = 40.0
 
 [node name="MineTiles" type="TileMapLayer" parent="." unique_id=79759539]
 tile_map_data = PackedByteArray("AAAfADUAAAAAAAAAAAAjADUAAAAAAAAAAAAnADUAAAACAAAAAAArADUAAAAAAAAAAAAnADkAAAACAAAAAAAjAD0AAAACAAAAAAAnAD0AAAAAAAAAAAAjADkAAAAAAAAAAAAvADUAAAAAAAAAAAAzADUAAAAAAAAAAAA3ADUAAAAAAAAAAAArADkAAAACAAAAAAAvADkAAAAAAAAAAAAvAD0AAAAAAAAAAAArAD0AAAAAAAAAAAA=")

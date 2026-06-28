@@ -7,6 +7,7 @@ enum BlockType {
 	DIRT,
 	ROCK,
 	COPPER,
+	RAWFUEL,
 	IRON,
 	GOLD,
 	TREASURE,
@@ -18,12 +19,14 @@ enum BlockType {
 @onready var mine_tiles: TileMapLayer = $MineTiles
 @onready var player_marker: Sprite2D = $MineTiles/PlayerMarker
 @onready var pause_menu: PauseMenu = $PauseMenu
+@onready var starfield: Node2D = $Starfield
 
 @export var tile_source_id: int = 0
 
 @export var dirt_tile: Vector2i = Vector2i(0, 0)
 @export var treasure_tile: Vector2i = Vector2i(1, 0)
 @export var rock_tile: Vector2i = Vector2i(2, 0)
+@export var rawfuel_tile: Vector2i = Vector2i(3, 0)
 @export var copper_tile: Vector2i = Vector2i(0, 1)
 @export var iron_tile: Vector2i = Vector2i(1, 1)
 @export var gold_tile: Vector2i = Vector2i(2, 1)
@@ -74,6 +77,7 @@ enum BlockType {
 @export var arrival_countdown_seconds: int = 3
 @export var dirt_hardness: float = 0.735
 @export var copper_hardness: float = 1.75
+@export var rawfuel_hardness: float = 1.75
 @export var iron_hardness: float = 1.75
 @export var gold_hardness: float = 2.1
 @export var treasure_hardness: float = 2.1
@@ -203,39 +207,45 @@ func choose_block_type_for_depth(y: int) -> BlockType:
 	if depth_ratio < 0.30:
 		if roll < 0.70:
 			return BlockType.DIRT
-		elif roll < 0.98:
+		elif roll < 0.965:
 			return BlockType.ROCK
-		else:
+		elif roll < 0.987:
 			return BlockType.COPPER
+		else:
+			return BlockType.RAWFUEL
 	elif depth_ratio < 0.65:
 		if roll < 0.45:
 			return BlockType.DIRT
-		elif roll < 0.86:
+		elif roll < 0.84:
 			return BlockType.ROCK
-		elif roll < 0.93:
+		elif roll < 0.91:
 			return BlockType.COPPER
-		elif roll < 0.97:
+		elif roll < 0.96:
+			return BlockType.RAWFUEL
+		elif roll < 0.985:
 			return BlockType.IRON
-		elif roll < 0.99:
+		elif roll < 0.995:
 			return BlockType.GOLD
 		else:
 			return BlockType.TREASURE
 	else:
 		if roll < 0.20:
 			return BlockType.DIRT
-		elif roll < 0.75:
+		elif roll < 0.72:
 			return BlockType.ROCK
-		elif roll < 0.83:
+		elif roll < 0.80:
 			return BlockType.COPPER
-		elif roll < 0.89:
+		elif roll < 0.87:
+			return BlockType.RAWFUEL
+		elif roll < 0.92:
 			return BlockType.IRON
-		elif roll < 0.93:
+		elif roll < 0.955:
 			return BlockType.GOLD
-		elif roll < 0.96:
-			return BlockType.TREASURE
 		elif roll < 0.98:
-			return BlockType.DIAMOND
+			return BlockType.TREASURE
 		elif roll < 0.992:
+			return BlockType.DIAMOND
+		elif roll < 0.997:
 			return BlockType.WARPGEMS
 		else:
 			return BlockType.BLACKHOLECRYSTALS
@@ -249,6 +259,8 @@ func get_tile_coords_for_block_type(block_type: BlockType) -> Vector2i:
 			return rock_tile
 		BlockType.COPPER:
 			return copper_tile
+		BlockType.RAWFUEL:
+			return rawfuel_tile
 		BlockType.IRON:
 			return iron_tile
 		BlockType.GOLD:
@@ -375,6 +387,7 @@ func update_camera() -> void:
 		return
 	
 	mining_camera.global_position = player_marker.global_position
+	starfield.global_position = mining_camera.global_position - get_viewport_rect().size * 0.5
 
 
 func create_fog_overlay() -> void:
@@ -695,6 +708,8 @@ func get_resource_value(resource_name: String) -> int:
 			return 5
 		"Gold":
 			return 9
+		"Raw Fuel":
+			return 4
 		"Treasure":
 			return 12
 		"Diamond":
@@ -713,6 +728,8 @@ func get_hardness_for_block_type(block_type: BlockType) -> float:
 			return dirt_hardness
 		BlockType.COPPER:
 			return copper_hardness
+		BlockType.RAWFUEL:
+			return rawfuel_hardness
 		BlockType.IRON:
 			return iron_hardness
 		BlockType.GOLD:
@@ -757,6 +774,8 @@ func get_resource_name_for_block_type(block_type: BlockType) -> String:
 			return "Rock"
 		BlockType.COPPER:
 			return "Copper"
+		BlockType.RAWFUEL:
+			return "Raw Fuel"
 		BlockType.IRON:
 			return "Iron"
 		BlockType.GOLD:
@@ -874,6 +893,7 @@ func create_shop_ui() -> void:
 	add_shop_button(box, "Withdraw All That Fits", Callable(self, "_on_withdraw_all_pressed"))
 	add_shop_button(box, "Sell All Cargo", Callable(self, "_on_sell_all_pressed"))
 	add_shop_button(box, "Sell Copper", Callable(self, "_on_sell_copper_pressed"))
+	add_shop_button(box, "Sell Raw Fuel", Callable(self, "_on_sell_raw_fuel_pressed"))
 	add_shop_button(box, "Sell Iron", Callable(self, "_on_sell_iron_pressed"))
 	add_shop_button(box, "Sell Gold", Callable(self, "_on_sell_gold_pressed"))
 	add_shop_button(box, "Sell Treasure", Callable(self, "_on_sell_treasure_pressed"))
@@ -881,9 +901,11 @@ func create_shop_ui() -> void:
 	add_shop_button(box, "Sell Warp Gems", Callable(self, "_on_sell_warp_gems_pressed"))
 	add_shop_button(box, "Sell Black Hole Crystals", Callable(self, "_on_sell_black_hole_crystals_pressed"))
 	add_shop_button(box, "Store Copper", Callable(self, "deposit_resource").bind("Copper"))
+	add_shop_button(box, "Store Raw Fuel", Callable(self, "deposit_resource").bind("Raw Fuel"))
 	add_shop_button(box, "Store Iron", Callable(self, "deposit_resource").bind("Iron"))
 	add_shop_button(box, "Store Gold", Callable(self, "deposit_resource").bind("Gold"))
 	add_shop_button(box, "Withdraw Copper", Callable(self, "withdraw_resource").bind("Copper"))
+	add_shop_button(box, "Withdraw Raw Fuel", Callable(self, "withdraw_resource").bind("Raw Fuel"))
 	add_shop_button(box, "Withdraw Iron", Callable(self, "withdraw_resource").bind("Iron"))
 	add_shop_button(box, "Withdraw Gold", Callable(self, "withdraw_resource").bind("Gold"))
 	refuel_button = add_shop_button(box, "Refuel Fully: 2 Gold per 10s", Callable(self, "_on_refuel_pressed"))
@@ -976,6 +998,7 @@ func get_sensor_upgrade_text() -> String:
 func get_sellable_resource_names() -> Array[String]:
 	return [
 		"Copper",
+		"Raw Fuel",
 		"Iron",
 		"Gold",
 		"Treasure",
@@ -1051,6 +1074,10 @@ func _on_sell_all_pressed() -> void:
 
 func _on_sell_copper_pressed() -> void:
 	sell_resource("Copper")
+
+
+func _on_sell_raw_fuel_pressed() -> void:
+	sell_resource("Raw Fuel")
 
 
 func _on_sell_iron_pressed() -> void:

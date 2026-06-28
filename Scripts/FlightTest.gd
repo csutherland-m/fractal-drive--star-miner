@@ -94,7 +94,7 @@ func play_mining_approach_cutscene(asteroid: Area2D) -> void:
 	cutscene_asteroid_position = asteroid_position
 	cutscene_orbit_radius = orbit_radius
 	cutscene_orbit_start = orbit_start
-	
+
 	var approach_tween := create_tween()
 	approach_tween.set_parallel(true)
 	approach_tween.tween_property(player_ship, "global_position", orbit_start, 0.75).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
