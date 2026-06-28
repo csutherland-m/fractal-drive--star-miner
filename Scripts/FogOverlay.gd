@@ -29,7 +29,7 @@ func _draw() -> void:
 		for x in range(first_column, last_column + 1):
 			var cell := Vector2i(x, y)
 			
-			if mine_tiles.get_cell_source_id(cell) == -1:
+			if not mining_scene.block_types_by_cell.has(cell):
 				continue
 			
 			if mining_scene.is_cell_revealed(cell):

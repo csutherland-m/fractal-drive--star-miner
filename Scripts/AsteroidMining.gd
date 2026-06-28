@@ -17,22 +17,25 @@ enum BlockType {
 }
 
 @onready var mine_tiles: TileMapLayer = $MineTiles
+@onready var background_tiles: TileMapLayer = $BackgroundTiles
+@onready var visual_mine_tiles: TileMapLayer = $VisualMineTiles
 @onready var player_marker: Sprite2D = $MineTiles/PlayerMarker
 @onready var pause_menu: PauseMenu = $PauseMenu
 @onready var starfield: Node2D = $Starfield
 
 @export var tile_source_id: int = 0
 
-@export var dirt_tile: Vector2i = Vector2i(0, 0)
-@export var treasure_tile: Vector2i = Vector2i(1, 0)
-@export var rock_tile: Vector2i = Vector2i(2, 0)
-@export var rawfuel_tile: Vector2i = Vector2i(3, 0)
-@export var copper_tile: Vector2i = Vector2i(0, 1)
-@export var iron_tile: Vector2i = Vector2i(1, 1)
-@export var gold_tile: Vector2i = Vector2i(2, 1)
-@export var warpgems_tile: Vector2i = Vector2i(0, 2)
-@export var blackholecrystal_tile: Vector2i = Vector2i(1, 2)
-@export var diamond_tile: Vector2i = Vector2i(2, 2)
+@export var dirt_tiles: Array[Vector2i] = [Vector2i(0, 0), Vector2i(1, 0), Vector2i(2, 0), Vector2i(3, 0)]
+@export var rock_tiles: Array[Vector2i] = [Vector2i(4, 0), Vector2i(5, 0), Vector2i(6, 0), Vector2i(7, 0)]
+@export var rawfuel_tiles: Array[Vector2i] = [Vector2i(0, 1), Vector2i(1, 1), Vector2i(2, 1), Vector2i(3, 1)]
+@export var copper_tiles: Array[Vector2i] = [Vector2i(4, 1), Vector2i(5, 1), Vector2i(6, 1)]
+@export var treasure_tiles: Array[Vector2i] = [Vector2i(7, 1)]
+@export var iron_tiles: Array[Vector2i] = [Vector2i(0, 2), Vector2i(1, 2), Vector2i(2, 2)]
+@export var gold_tiles: Array[Vector2i] = [Vector2i(3, 2), Vector2i(4, 2), Vector2i(5, 2)]
+@export var warpgems_tiles: Array[Vector2i] = [Vector2i(6, 2), Vector2i(7, 2)]
+@export var blackholecrystal_tiles: Array[Vector2i] = [Vector2i(0, 3), Vector2i(1, 3)]
+@export var diamond_tiles: Array[Vector2i] = [Vector2i(2, 3), Vector2i(3, 3)]
+@export var dug_dirt_tiles: Array[Vector2i] = [Vector2i(4, 3), Vector2i(5, 3), Vector2i(6, 3), Vector2i(7, 3)]
 
 @export var grid_width: int = 30
 @export var grid_height: int = 17
@@ -167,6 +170,8 @@ func _physics_process(delta: float) -> void:
 
 func generate_mine_tiles() -> void:
 	mine_tiles.clear()
+	background_tiles.clear()
+	visual_mine_tiles.clear()
 	block_types_by_cell.clear()
 	revealed_cells.clear()
 	generated_row_count = 0
@@ -186,11 +191,17 @@ func generate_rows_until(target_row_count: int) -> void:
 			if y < empty_top_rows:
 				continue
 			
+			background_tiles.set_cell(
+				cell_position,
+				tile_source_id,
+				get_dug_dirt_tile_coords()
+			)
+			
 			var block_type := choose_block_type_for_depth(y)
 			var tile_coords := get_tile_coords_for_block_type(block_type)
 			
 			if block_type != BlockType.EMPTY:
-				mine_tiles.set_cell(
+				visual_mine_tiles.set_cell(
 					cell_position,
 					tile_source_id,
 					tile_coords
@@ -254,27 +265,38 @@ func choose_block_type_for_depth(y: int) -> BlockType:
 func get_tile_coords_for_block_type(block_type: BlockType) -> Vector2i:
 	match block_type:
 		BlockType.DIRT:
-			return dirt_tile
+			return pick_tile_coords(dirt_tiles, Vector2i(0, 0))
 		BlockType.ROCK:
-			return rock_tile
+			return pick_tile_coords(rock_tiles, Vector2i(4, 0))
 		BlockType.COPPER:
-			return copper_tile
+			return pick_tile_coords(copper_tiles, Vector2i(4, 1))
 		BlockType.RAWFUEL:
-			return rawfuel_tile
+			return pick_tile_coords(rawfuel_tiles, Vector2i(0, 1))
 		BlockType.IRON:
-			return iron_tile
+			return pick_tile_coords(iron_tiles, Vector2i(0, 2))
 		BlockType.GOLD:
-			return gold_tile
+			return pick_tile_coords(gold_tiles, Vector2i(3, 2))
 		BlockType.TREASURE:
-			return treasure_tile
+			return pick_tile_coords(treasure_tiles, Vector2i(7, 1))
 		BlockType.DIAMOND:
-			return diamond_tile
+			return pick_tile_coords(diamond_tiles, Vector2i(2, 3))
 		BlockType.WARPGEMS:
-			return warpgems_tile
+			return pick_tile_coords(warpgems_tiles, Vector2i(6, 2))
 		BlockType.BLACKHOLECRYSTALS:
-			return blackholecrystal_tile
+			return pick_tile_coords(blackholecrystal_tiles, Vector2i(0, 3))
 		_:
-			return dirt_tile
+			return pick_tile_coords(dirt_tiles, Vector2i(0, 0))
+
+
+func get_dug_dirt_tile_coords() -> Vector2i:
+	return pick_tile_coords(dug_dirt_tiles, Vector2i(4, 3))
+
+
+func pick_tile_coords(tile_options: Array[Vector2i], fallback: Vector2i) -> Vector2i:
+	if tile_options.is_empty():
+		return fallback
+	
+	return tile_options.pick_random()
 
 
 func position_player_in_sky() -> void:
@@ -547,7 +569,7 @@ func is_solid_at_position(local_position: Vector2) -> bool:
 	if cell.y >= generated_row_count:
 		generate_rows_until(cell.y + generation_buffer_rows)
 	
-	return mine_tiles.get_cell_source_id(cell) != -1
+	return block_types_by_cell.has(cell)
 
 
 func update_mine_direction() -> void:
@@ -605,7 +627,7 @@ func try_mine_with_movement_input(delta: float) -> void:
 	
 	var target_cell := get_target_mine_cell()
 	
-	if mine_tiles.get_cell_source_id(target_cell) == -1:
+	if not block_types_by_cell.has(target_cell):
 		reset_mining_progress()
 		return
 	
@@ -642,7 +664,7 @@ func reset_mining_progress() -> void:
 
 
 func mine_target_cell(target_cell: Vector2i) -> void:
-	if mine_tiles.get_cell_source_id(target_cell) == -1:
+	if not block_types_by_cell.has(target_cell):
 		return
 	
 	var block_type: BlockType = block_types_by_cell.get(target_cell, BlockType.ROCK)
@@ -652,7 +674,7 @@ func mine_target_cell(target_cell: Vector2i) -> void:
 		update_hud()
 		return
 	
-	mine_tiles.erase_cell(target_cell)
+	visual_mine_tiles.erase_cell(target_cell)
 	block_types_by_cell.erase(target_cell)
 	
 	if is_inventory_resource(resource_name):
@@ -823,7 +845,7 @@ func update_mining_overlays() -> void:
 		mining_progress_overlay.visible = false
 		return
 	
-	if mine_tiles.get_cell_source_id(active_mining_cell) == -1:
+	if not block_types_by_cell.has(active_mining_cell):
 		mining_blink_overlay.visible = false
 		mining_progress_overlay.visible = false
 		return
