@@ -59,12 +59,13 @@ enum BlockType {
 @export var air_acceleration: float = 450.0
 @export var ground_deceleration: float = 850.0
 @export var air_deceleration: float = 550.0
-@export var ship_rotation_speed: float = 8.0
 @export var upward_thrust: float = 1500.0
 @export var max_rise_speed: float = 360.0
 @export var player_collision_width: float = 42.0
 @export var player_collision_height: float = 58.0
-@export var player_sprite_scale: float = 0.39
+@export var player_sprite_scale: float = 1.0
+@export var player_animation_frames: int = 4
+@export var player_animation_fps: float = 10.0
 
 @export var drill_damage_per_second: float = 1.0
 @export var copper_drill_cost: int = 5
@@ -97,7 +98,7 @@ var is_arrival_countdown_active: bool = false
 var is_on_ground: bool = false
 var player_velocity: Vector2 = Vector2.ZERO
 var last_mine_direction: Vector2i = Vector2i.DOWN
-var target_player_rotation: float = 0.0
+var player_animation_time: float = 0.0
 var block_types_by_cell: Dictionary = {}
 var resources: Dictionary = {}
 var warehouse_resources: Dictionary = {}
@@ -113,7 +114,12 @@ var shop_center_position: Vector2 = Vector2.ZERO
 var shop_size: Vector2 = Vector2(192.0, 64.0)
 var shop_panel: Panel
 var shop_status_label: Label
+var shop_content: Control
+var shop_title_label: Label
 var refuel_button: Button
+var upgrade_levels: Dictionary = {}
+var upgrade_definitions: Dictionary = {}
+var fuel_consumption_multiplier: float = 1.0
 var game_over_label: Label
 var countdown_label: Label
 var mining_camera: Camera2D
@@ -131,6 +137,7 @@ var generated_row_count: int = 0
 
 
 func _ready() -> void:
+	configure_crisp_canvas_items()
 	pause_menu.resume_requested.connect(_on_resume_pressed)
 	pause_menu.quit_requested.connect(_on_quit_pressed)
 	coins = starting_gold
@@ -150,6 +157,13 @@ func _ready() -> void:
 	update_hud()
 
 
+func configure_crisp_canvas_items() -> void:
+	mine_tiles.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	background_tiles.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	visual_mine_tiles.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	player_marker.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+
+
 func _physics_process(delta: float) -> void:
 	if is_paused or is_arrival_countdown_active:
 		return
@@ -161,8 +175,8 @@ func _physics_process(delta: float) -> void:
 	ensure_world_generated_near_player()
 	update_camera()
 	update_mine_direction()
-	rotate_player_toward_target(delta)
 	try_mine_with_movement_input(delta)
+	update_player_visual(delta)
 	update_revealed_cells()
 	update_mining_overlays()
 	queue_redraw()
@@ -304,8 +318,9 @@ func position_player_in_sky() -> void:
 	var start_cell := Vector2i(center_column, empty_top_rows - 2)
 	player_marker.position = mine_tiles.map_to_local(start_cell)
 	player_marker.scale = Vector2(player_sprite_scale, player_sprite_scale)
-	target_player_rotation = get_rotation_for_mine_direction(Vector2i.DOWN)
-	player_marker.rotation = target_player_rotation
+	player_marker.rotation = 0.0
+	player_marker.region_enabled = true
+	player_marker.region_rect = Rect2(0.0, 0.0, 64.0, 64.0)
 	player_marker.z_index = 10
 	player_velocity = Vector2.ZERO
 
@@ -375,7 +390,7 @@ func drain_fuel_for_movement(delta: float) -> void:
 	if not is_movement_input_pressed():
 		return
 	
-	fuel_seconds = maxf(fuel_seconds - delta, 0.0)
+	fuel_seconds = maxf(fuel_seconds - delta * fuel_consumption_multiplier, 0.0)
 	update_hud()
 	
 	if fuel_seconds <= 0.0:
@@ -398,8 +413,7 @@ func is_movement_input_pressed() -> bool:
 func create_mining_camera() -> void:
 	mining_camera = Camera2D.new()
 	mining_camera.name = "MiningCamera"
-	mining_camera.position_smoothing_enabled = true
-	mining_camera.position_smoothing_speed = 8.0
+	mining_camera.position_smoothing_enabled = false
 	add_child(mining_camera)
 	mining_camera.make_current()
 
@@ -408,8 +422,8 @@ func update_camera() -> void:
 	if mining_camera == null:
 		return
 	
-	mining_camera.global_position = player_marker.global_position
-	starfield.global_position = mining_camera.global_position - get_viewport_rect().size * 0.5
+	mining_camera.global_position = player_marker.global_position.round()
+	starfield.global_position = (mining_camera.global_position - get_viewport_rect().size * 0.5).round()
 
 
 func create_fog_overlay() -> void:
@@ -579,15 +593,6 @@ func update_mine_direction() -> void:
 		return
 	
 	last_mine_direction = held_direction
-	target_player_rotation = get_rotation_for_mine_direction(last_mine_direction)
-
-
-func rotate_player_toward_target(delta: float) -> void:
-	player_marker.rotation = lerp_angle(
-		player_marker.rotation,
-		target_player_rotation,
-		ship_rotation_speed * delta
-	)
 
 
 func get_held_mine_direction() -> Vector2i:
@@ -603,16 +608,45 @@ func get_held_mine_direction() -> Vector2i:
 	return Vector2i.ZERO
 
 
-func get_rotation_for_mine_direction(direction: Vector2i) -> float:
-	match direction:
+func update_player_visual(delta: float) -> void:
+	var held_direction := get_held_mine_direction()
+	var visual_direction := last_mine_direction
+	var is_animating := held_direction != Vector2i.ZERO or player_velocity.length() > 5.0
+	
+	if held_direction != Vector2i.ZERO:
+		visual_direction = held_direction
+	elif absf(player_velocity.x) > absf(player_velocity.y) and absf(player_velocity.x) > 5.0:
+		visual_direction = Vector2i.RIGHT if player_velocity.x > 0.0 else Vector2i.LEFT
+	elif absf(player_velocity.y) > 5.0:
+		visual_direction = Vector2i.DOWN if player_velocity.y > 0.0 else Vector2i.UP
+	
+	if is_animating:
+		player_animation_time += delta
+	
+	var frame := int(floor(player_animation_time * player_animation_fps)) % maxi(player_animation_frames, 1)
+	var row := 0
+	player_marker.rotation = 0.0
+	player_marker.flip_h = false
+	player_marker.flip_v = false
+	
+	match visual_direction:
 		Vector2i.LEFT:
-			return deg_to_rad(90.0)
+			row = 1
+			player_marker.flip_h = true
 		Vector2i.RIGHT:
-			return deg_to_rad(-90.0)
+			row = 1
 		Vector2i.UP:
-			return deg_to_rad(180.0)
+			row = 0
+			player_marker.flip_v = true
 		_:
-			return 0.0
+			row = 0
+	
+	player_marker.region_rect = Rect2(
+		float(frame * 64),
+		float(row * 64),
+		64.0,
+		64.0
+	)
 
 
 func try_mine_with_movement_input(delta: float) -> void:
@@ -623,7 +657,6 @@ func try_mine_with_movement_input(delta: float) -> void:
 		return
 	
 	last_mine_direction = held_direction
-	target_player_rotation = get_rotation_for_mine_direction(last_mine_direction)
 	
 	var target_cell := get_target_mine_cell()
 	
@@ -869,80 +902,371 @@ func update_mining_overlays() -> void:
 
 
 func create_shop_ui() -> void:
+	initialize_upgrade_definitions()
+	
 	var shop_layer := CanvasLayer.new()
 	shop_layer.name = "ShopUI"
 	add_child(shop_layer)
 	
 	shop_panel = Panel.new()
 	shop_panel.name = "ShopPanel"
-	shop_panel.anchor_left = 0.5
-	shop_panel.anchor_right = 0.5
-	shop_panel.anchor_top = 0.5
-	shop_panel.anchor_bottom = 0.5
-	shop_panel.offset_left = -330.0
-	shop_panel.offset_right = 330.0
-	shop_panel.offset_top = -335.0
-	shop_panel.offset_bottom = 335.0
+	shop_panel.theme = GameTheme.create_button_theme()
+	shop_panel.anchor_left = 0.04
+	shop_panel.anchor_right = 0.96
+	shop_panel.anchor_top = 0.05
+	shop_panel.anchor_bottom = 0.95
+	shop_panel.offset_left = 0.0
+	shop_panel.offset_right = 0.0
+	shop_panel.offset_top = 0.0
+	shop_panel.offset_bottom = 0.0
 	shop_panel.visible = false
 	shop_layer.add_child(shop_panel)
 	
-	var scroll := ScrollContainer.new()
-	scroll.name = "ShopScroll"
-	scroll.anchor_right = 1.0
-	scroll.anchor_bottom = 1.0
-	scroll.offset_left = 24.0
-	scroll.offset_top = 20.0
-	scroll.offset_right = -24.0
-	scroll.offset_bottom = -20.0
-	shop_panel.add_child(scroll)
+	var margin := MarginContainer.new()
+	margin.anchor_right = 1.0
+	margin.anchor_bottom = 1.0
+	margin.offset_left = 28.0
+	margin.offset_top = 24.0
+	margin.offset_right = -28.0
+	margin.offset_bottom = -24.0
+	margin.add_theme_constant_override("margin_left", 0)
+	margin.add_theme_constant_override("margin_top", 0)
+	margin.add_theme_constant_override("margin_right", 0)
+	margin.add_theme_constant_override("margin_bottom", 0)
+	shop_panel.add_child(margin)
 	
 	var box := VBoxContainer.new()
 	box.name = "ShopBox"
 	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.add_child(box)
+	box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	box.add_theme_constant_override("separation", 16)
+	margin.add_child(box)
 	
-	var title := Label.new()
-	title.text = "Surface Shop"
-	title.add_theme_font_size_override("font_size", 26)
-	box.add_child(title)
+	shop_title_label = Label.new()
+	shop_title_label.text = "Surface Shop"
+	shop_title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	shop_title_label.add_theme_font_size_override("font_size", 30)
+	box.add_child(shop_title_label)
 	
 	shop_status_label = Label.new()
 	shop_status_label.add_theme_font_size_override("font_size", 16)
+	shop_status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	shop_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	box.add_child(shop_status_label)
 	
-	add_shop_button(box, "Store All Cargo", Callable(self, "_on_deposit_all_pressed"))
-	add_shop_button(box, "Withdraw All That Fits", Callable(self, "_on_withdraw_all_pressed"))
-	add_shop_button(box, "Sell All Cargo", Callable(self, "_on_sell_all_pressed"))
-	add_shop_button(box, "Sell Copper", Callable(self, "_on_sell_copper_pressed"))
-	add_shop_button(box, "Sell Raw Fuel", Callable(self, "_on_sell_raw_fuel_pressed"))
-	add_shop_button(box, "Sell Iron", Callable(self, "_on_sell_iron_pressed"))
-	add_shop_button(box, "Sell Gold", Callable(self, "_on_sell_gold_pressed"))
-	add_shop_button(box, "Sell Treasure", Callable(self, "_on_sell_treasure_pressed"))
-	add_shop_button(box, "Sell Diamond", Callable(self, "_on_sell_diamond_pressed"))
-	add_shop_button(box, "Sell Warp Gems", Callable(self, "_on_sell_warp_gems_pressed"))
-	add_shop_button(box, "Sell Black Hole Crystals", Callable(self, "_on_sell_black_hole_crystals_pressed"))
-	add_shop_button(box, "Store Copper", Callable(self, "deposit_resource").bind("Copper"))
-	add_shop_button(box, "Store Raw Fuel", Callable(self, "deposit_resource").bind("Raw Fuel"))
-	add_shop_button(box, "Store Iron", Callable(self, "deposit_resource").bind("Iron"))
-	add_shop_button(box, "Store Gold", Callable(self, "deposit_resource").bind("Gold"))
-	add_shop_button(box, "Withdraw Copper", Callable(self, "withdraw_resource").bind("Copper"))
-	add_shop_button(box, "Withdraw Raw Fuel", Callable(self, "withdraw_resource").bind("Raw Fuel"))
-	add_shop_button(box, "Withdraw Iron", Callable(self, "withdraw_resource").bind("Iron"))
-	add_shop_button(box, "Withdraw Gold", Callable(self, "withdraw_resource").bind("Gold"))
-	refuel_button = add_shop_button(box, "Refuel Fully: 2 Gold per 10s", Callable(self, "_on_refuel_pressed"))
-	add_shop_button(box, "Buy Copper Drill: 20 Gold + 5 Copper", Callable(self, "_on_buy_copper_drill_pressed"))
-	add_shop_button(box, "Buy Sensors: 15 Gold + 1 Copper + 1 Iron", Callable(self, "_on_buy_sensor_upgrade_pressed"))
-	add_shop_button(box, "Leave Shop", Callable(self, "close_shop"))
+	shop_content = VBoxContainer.new()
+	shop_content.name = "ShopContent"
+	shop_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	shop_content.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	shop_content.add_theme_constant_override("separation", 18)
+	box.add_child(shop_content)
+	
+	show_shop_main_view()
 
 
 func add_shop_button(parent: Control, text: String, callback: Callable) -> Button:
 	var button := Button.new()
 	button.text = text
-	button.custom_minimum_size = Vector2(0.0, 28.0)
+	button.custom_minimum_size = Vector2(0.0, 46.0)
+	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	button.pressed.connect(callback)
 	parent.add_child(button)
 	return button
+
+
+func add_shop_spacer(parent: Control) -> Control:
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	parent.add_child(spacer)
+	return spacer
+
+
+func clear_shop_content() -> void:
+	if shop_content == null:
+		return
+	
+	for child in shop_content.get_children():
+		child.queue_free()
+
+
+func show_shop_main_view() -> void:
+	clear_shop_content()
+	shop_title_label.text = "Surface Shop"
+	
+	var top_row := HBoxContainer.new()
+	top_row.add_theme_constant_override("separation", 28)
+	top_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	shop_content.add_child(top_row)
+	
+	add_shop_button(top_row, "Upgrades", Callable(self, "show_upgrade_category_view"))
+	refuel_button = add_shop_button(top_row, get_refuel_button_text(), Callable(self, "_on_refuel_pressed"))
+	add_shop_button(top_row, "Market", Callable(self, "show_market_view"))
+	
+	var center_box := CenterContainer.new()
+	center_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	center_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	shop_content.add_child(center_box)
+	
+	var summary := Label.new()
+	summary.custom_minimum_size = Vector2(520.0, 80.0)
+	summary.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	summary.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	summary.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	summary.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	summary.add_theme_font_size_override("font_size", 22)
+	summary.text = "Choose a station."
+	center_box.add_child(summary)
+	
+	add_shop_button(shop_content, "Leave Shop", Callable(self, "close_shop"))
+	update_shop_ui()
+
+
+func show_upgrade_category_view() -> void:
+	clear_shop_content()
+	shop_title_label.text = "Upgrades"
+	
+	var category_box := VBoxContainer.new()
+	category_box.alignment = BoxContainer.ALIGNMENT_CENTER
+	category_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	category_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	category_box.add_theme_constant_override("separation", 18)
+	shop_content.add_child(category_box)
+	
+	for category_name in ["Miner", "Lander", "Starship", "Global"]:
+		var button := add_shop_button(category_box, category_name, Callable(self, "show_upgrade_grid_view").bind(category_name))
+		button.custom_minimum_size = Vector2(380.0, 62.0)
+		button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	
+	add_shop_button(shop_content, "Back", Callable(self, "show_shop_main_view"))
+	update_shop_ui()
+
+
+func show_upgrade_grid_view(category_name: String) -> void:
+	clear_shop_content()
+	shop_title_label.text = "%s Upgrades" % category_name
+	
+	var grid_center := CenterContainer.new()
+	grid_center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	grid_center.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	shop_content.add_child(grid_center)
+	
+	var grid := GridContainer.new()
+	grid.columns = 2
+	grid.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	grid.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	grid.add_theme_constant_override("h_separation", 32)
+	grid.add_theme_constant_override("v_separation", 24)
+	grid_center.add_child(grid)
+	
+	var category_upgrades: Array = upgrade_definitions.get(category_name, [])
+	for definition in category_upgrades:
+		var upgrade_id: String = String(definition["id"])
+		var level: int = int(upgrade_levels.get(upgrade_id, 0))
+		var costs := get_upgrade_costs(definition, level)
+		var button_text := "%s\nLvl %d/10\n%s\n%s" % [
+			String(definition["name"]),
+			level,
+			format_upgrade_effect(definition, level),
+			format_upgrade_costs(costs)
+		]
+		var button := add_shop_button(grid, button_text, Callable(self, "_on_upgrade_pressed").bind(category_name, upgrade_id))
+		button.custom_minimum_size = Vector2(260.0, 94.0)
+		button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		button.add_theme_font_size_override("font_size", 15)
+		button.disabled = level >= 10 or not can_afford_upgrade(costs)
+	
+	add_shop_button(shop_content, "Back to Upgrades", Callable(self, "show_upgrade_category_view"))
+	update_shop_ui()
+
+
+func show_market_view() -> void:
+	clear_shop_content()
+	shop_title_label.text = "Market"
+	
+	var grid := GridContainer.new()
+	grid.columns = 3
+	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	grid.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	grid.add_theme_constant_override("h_separation", 18)
+	grid.add_theme_constant_override("v_separation", 14)
+	shop_content.add_child(grid)
+	
+	add_shop_button(grid, "Store All Cargo", Callable(self, "_on_deposit_all_pressed"))
+	add_shop_button(grid, "Withdraw All That Fits", Callable(self, "_on_withdraw_all_pressed"))
+	add_shop_button(grid, "Sell All Cargo", Callable(self, "_on_sell_all_pressed"))
+	add_shop_button(grid, "Sell Copper", Callable(self, "_on_sell_copper_pressed"))
+	add_shop_button(grid, "Sell Raw Fuel", Callable(self, "_on_sell_raw_fuel_pressed"))
+	add_shop_button(grid, "Sell Iron", Callable(self, "_on_sell_iron_pressed"))
+	add_shop_button(grid, "Sell Gold", Callable(self, "_on_sell_gold_pressed"))
+	add_shop_button(grid, "Sell Treasure", Callable(self, "_on_sell_treasure_pressed"))
+	add_shop_button(grid, "Sell Diamond", Callable(self, "_on_sell_diamond_pressed"))
+	add_shop_button(grid, "Sell Warp Gems", Callable(self, "_on_sell_warp_gems_pressed"))
+	add_shop_button(grid, "Sell Black Hole Crystals", Callable(self, "_on_sell_black_hole_crystals_pressed"))
+	add_shop_button(grid, "Store Copper", Callable(self, "deposit_resource").bind("Copper"))
+	add_shop_button(grid, "Store Raw Fuel", Callable(self, "deposit_resource").bind("Raw Fuel"))
+	add_shop_button(grid, "Store Iron", Callable(self, "deposit_resource").bind("Iron"))
+	add_shop_button(grid, "Store Gold", Callable(self, "deposit_resource").bind("Gold"))
+	add_shop_button(grid, "Withdraw Copper", Callable(self, "withdraw_resource").bind("Copper"))
+	add_shop_button(grid, "Withdraw Raw Fuel", Callable(self, "withdraw_resource").bind("Raw Fuel"))
+	add_shop_button(grid, "Withdraw Iron", Callable(self, "withdraw_resource").bind("Iron"))
+	add_shop_button(grid, "Withdraw Gold", Callable(self, "withdraw_resource").bind("Gold"))
+	
+	add_shop_button(shop_content, "Back", Callable(self, "show_shop_main_view"))
+	update_shop_ui()
+
+
+func initialize_upgrade_definitions() -> void:
+	upgrade_definitions = {
+		"Miner": [
+			make_upgrade("miner_drill_efficiency", "Drill Efficiency", [{"resource": "Copper", "amount": 3}], "Drills mine 10% faster per level."),
+			make_upgrade("miner_cargo_capacity", "Cargo Capacity", [{"resource": "Iron", "amount": 3}], "Miner cargo capacity increases 10% per level."),
+			make_upgrade("miner_fuel_tank", "Fuel Tank", [{"resource": "Copper", "amount": 2}, {"resource": "Iron", "amount": 2}, {"resource": "Gold", "amount": 1}], "Miner fuel capacity increases 10% per level."),
+			make_upgrade("miner_engine_power", "Engine Power", [{"resource": "Copper", "amount": 2}, {"resource": "Iron", "amount": 2}, {"resource": "Gold", "amount": 1}], "Vehicle speed increases 5% per level."),
+			make_upgrade("miner_engine_efficiency", "Engine Efficiency", [{"resource": "Copper", "amount": 1}, {"resource": "Iron", "amount": 1}, {"resource": "Gold Coins", "amount": 10}], "Movement fuel use improves 10% per level."),
+			make_upgrade("miner_hull_strength", "Hull Strength", [{"resource": "Iron", "amount": 2}, {"resource": "Gold", "amount": 1}, {"resource": "Gold Coins", "amount": 10}], "Placeholder hull durability bonus."),
+			make_upgrade("miner_sensor_strength", "Sensor Strength", [{"resource": "Copper", "amount": 1}, {"resource": "Iron", "amount": 1}, {"resource": "Gold Coins", "amount": 10}], "Mining reveal radius improves over time."),
+		],
+		"Lander": [
+			make_upgrade("lander_cargo_capacity", "Cargo Capacity", [{"resource": "Iron", "amount": 2}, {"resource": "Gold Coins", "amount": 10}], "Lander storage increases 10% per level."),
+			make_upgrade("lander_fuel_storage_capacity", "Fuel Storage Capacity", [{"resource": "Copper", "amount": 2}, {"resource": "Iron", "amount": 1}, {"resource": "Gold Coins", "amount": 10}], "Lander fuel storage increases 10% per level."),
+			make_upgrade("lander_ore_transfer_rate", "Ore Transfer Rate", [{"resource": "Copper", "amount": 1}, {"resource": "Iron", "amount": 1}, {"resource": "Gold Coins", "amount": 10}], "Ore transfer speed increases 10% per level."),
+			make_upgrade("lander_fuel_plant_speed", "Fuel Plant Speed", [{"resource": "Copper", "amount": 2}, {"resource": "Raw Fuel", "amount": 1}, {"resource": "Gold Coins", "amount": 10}], "Fuel processing speed increases 10% per level."),
+			make_upgrade("lander_fuel_plant_efficiency", "Fuel Plant Efficiency", [{"resource": "Iron", "amount": 1}, {"resource": "Raw Fuel", "amount": 2}, {"resource": "Gold Coins", "amount": 10}], "Fuel output improves 10% per level."),
+			make_upgrade("lander_repair_station", "Repair Station", [{"resource": "Iron", "amount": 2}, {"resource": "Gold", "amount": 1}, {"resource": "Gold Coins", "amount": 10}], "Repair strength improves 10% per level."),
+			make_upgrade("lander_upgrade_station", "Upgrade Station", [{"resource": "Copper", "amount": 2}, {"resource": "Iron", "amount": 2}, {"resource": "Gold Coins", "amount": 10}], "Upgrade station capability improves 10% per level."),
+		],
+		"Starship": [
+			make_upgrade("starship_fuel_capacity", "Fuel Capacity", [{"resource": "Copper", "amount": 2}, {"resource": "Raw Fuel", "amount": 2}, {"resource": "Gold Coins", "amount": 10}], "Starship fuel capacity increases 10% per level."),
+			make_upgrade("starship_ltl_drive_performance", "LTL Drive Performance", [{"resource": "Copper", "amount": 2}, {"resource": "Iron", "amount": 1}, {"resource": "Gold Coins", "amount": 10}], "LTL drive performance increases 10% per level."),
+			make_upgrade("starship_ftl_drive_performance", "FTL Drive Performance", [{"resource": "Iron", "amount": 2}, {"resource": "Gold", "amount": 1}, {"resource": "Gold Coins", "amount": 10}], "FTL drive performance increases 10% per level."),
+			make_upgrade("starship_sensor_range", "Sensor Range", [{"resource": "Copper", "amount": 1}, {"resource": "Iron", "amount": 1}, {"resource": "Gold Coins", "amount": 10}], "Starship sensor range increases 10% per level."),
+			make_upgrade("starship_hull_strength", "Hull Strength", [{"resource": "Iron", "amount": 2}, {"resource": "Gold", "amount": 1}, {"resource": "Gold Coins", "amount": 10}], "Starship hull strength increases 10% per level."),
+			make_upgrade("starship_modification", "Modification", [{"resource": "Copper", "amount": 2}, {"resource": "Iron", "amount": 2}, {"resource": "Gold Coins", "amount": 10}], "Future module panel placeholder."),
+		],
+		"Global": [
+			make_upgrade("global_market_rates", "Market Rates", [{"resource": "Copper", "amount": 1}, {"resource": "Iron", "amount": 1}, {"resource": "Gold Coins", "amount": 10}], "Future sell-price bonus placeholder."),
+			make_upgrade("global_mining_data", "Mining Data", [{"resource": "Copper", "amount": 1}, {"resource": "Gold Coins", "amount": 10}], "Future asteroid intel placeholder."),
+			make_upgrade("global_fleet_logistics", "Fleet Logistics", [{"resource": "Iron", "amount": 1}, {"resource": "Gold Coins", "amount": 10}], "Future shared capacity placeholder."),
+		],
+	}
+
+
+func make_upgrade(upgrade_id: String, upgrade_name: String, base_costs: Array, description: String) -> Dictionary:
+	return {
+		"id": upgrade_id,
+		"name": upgrade_name,
+		"base_costs": base_costs,
+		"description": description,
+	}
+
+
+func get_upgrade_costs(definition: Dictionary, level: int) -> Array:
+	var costs: Array = []
+	for base_cost in definition["base_costs"]:
+		var resource_name: String = String(base_cost["resource"])
+		var base_amount: int = int(base_cost["amount"])
+		var amount := base_amount + level
+		if resource_name == "Gold Coins":
+			amount = base_amount * (level + 1)
+		costs.append({"resource": resource_name, "amount": amount})
+	return costs
+
+
+func format_upgrade_effect(definition: Dictionary, level: int) -> String:
+	if level >= 10:
+		return "Max level reached"
+	var description := String(definition["description"])
+	description = description.replace(" increases ", " +")
+	description = description.replace(" improves ", " +")
+	description = description.replace(" per level.", " / level")
+	description = description.replace("Placeholder ", "")
+	description = description.replace("Future ", "")
+	return description
+
+
+func format_upgrade_costs(costs: Array) -> String:
+	var parts: Array[String] = []
+	for cost in costs:
+		parts.append("%d %s" % [int(cost["amount"]), String(cost["resource"])])
+	return "Cost: %s" % " + ".join(parts)
+
+
+func can_afford_upgrade(costs: Array) -> bool:
+	for cost in costs:
+		var resource_name: String = String(cost["resource"])
+		var amount: int = int(cost["amount"])
+		if resource_name == "Gold Coins":
+			if coins < amount:
+				return false
+		elif get_total_resource_count(resource_name) < amount:
+			return false
+	return true
+
+
+func pay_upgrade_costs(costs: Array) -> void:
+	for cost in costs:
+		var resource_name: String = String(cost["resource"])
+		var amount: int = int(cost["amount"])
+		if resource_name == "Gold Coins":
+			coins -= amount
+		else:
+			consume_resource(resource_name, amount)
+
+
+func _on_upgrade_pressed(category_name: String, upgrade_id: String) -> void:
+	var definition := get_upgrade_definition(category_name, upgrade_id)
+	if definition.is_empty():
+		return
+	
+	var level: int = int(upgrade_levels.get(upgrade_id, 0))
+	if level >= 10:
+		return
+	
+	var costs := get_upgrade_costs(definition, level)
+	if not can_afford_upgrade(costs):
+		update_shop_ui()
+		show_upgrade_grid_view(category_name)
+		return
+	
+	pay_upgrade_costs(costs)
+	upgrade_levels[upgrade_id] = level + 1
+	apply_upgrade_effect(upgrade_id, level + 1)
+	show_upgrade_grid_view(category_name)
+	update_hud()
+
+
+func get_upgrade_definition(category_name: String, upgrade_id: String) -> Dictionary:
+	var category_upgrades: Array = upgrade_definitions.get(category_name, [])
+	for definition in category_upgrades:
+		if String(definition["id"]) == upgrade_id:
+			return definition
+	return {}
+
+
+func apply_upgrade_effect(upgrade_id: String, new_level: int) -> void:
+	match upgrade_id:
+		"miner_drill_efficiency":
+			drill_damage_per_second *= 1.1
+		"miner_cargo_capacity":
+			inventory_capacity = ceili(float(inventory_capacity) * 1.1)
+		"miner_fuel_tank":
+			var old_max_fuel := max_fuel_seconds
+			max_fuel_seconds *= 1.1
+			fuel_seconds += max_fuel_seconds - old_max_fuel
+		"miner_engine_power":
+			move_speed *= 1.05
+			ground_acceleration *= 1.05
+			air_acceleration *= 1.05
+		"miner_engine_efficiency":
+			fuel_consumption_multiplier *= 0.9
+		"miner_sensor_strength":
+			reveal_radius_tiles = maxi(reveal_radius_tiles, 1 + ceili(float(new_level) / 2.0))
+			update_revealed_cells()
+
+
+func get_refuel_button_text() -> String:
+	return "Refuel\n%d Gold" % get_full_refuel_cost()
 
 
 func open_shop() -> void:
@@ -951,6 +1275,7 @@ func open_shop() -> void:
 	reset_mining_progress()
 	player_velocity = Vector2.ZERO
 	shop_panel.visible = true
+	show_shop_main_view()
 	update_shop_ui()
 	update_hud()
 
@@ -969,22 +1294,18 @@ func update_shop_ui() -> void:
 	
 	var refuel_cost := get_full_refuel_cost()
 	if refuel_button != null:
+		refuel_button.text = get_refuel_button_text()
 		refuel_button.disabled = refuel_cost <= 0 or coins < refuel_cost
 	
 	shop_status_label.text = (
-		"Gold Coins: %d\nFuel: %.1f / %.1fs\nRefuel Cost: %d Gold\nCargo: %d / %d\nWarehouse: %d items\n\nCargo:\n%s\n\nWarehouse:\n%s\n\nUpgrades:\n%s\n%s"
+		"Gold Coins: %d   Fuel: %.1f / %.1fs   Cargo: %d / %d   Warehouse: %d items"
 		% [
 			coins,
 			fuel_seconds,
 			max_fuel_seconds,
-			refuel_cost,
 			get_inventory_count(),
 			inventory_capacity,
-			get_warehouse_count(),
-			get_resource_list_text(resources),
-			get_resource_list_text(warehouse_resources),
-			get_drill_upgrade_text(),
-			get_sensor_upgrade_text()
+			get_warehouse_count()
 		]
 	)
 

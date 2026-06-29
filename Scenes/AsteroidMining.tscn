@@ -3,7 +3,7 @@
 [ext_resource type="Script" uid="uid://tjcuhfbpu63y" path="res://Scripts/AsteroidMining.gd" id="1_8b7qf"]
 [ext_resource type="Texture2D" uid="uid://g4hy5xj7p6qt" path="res://Sprites/TileSets/MiningTilesVariantsDugDirt64.png" id="2_3yq2h"]
 [ext_resource type="PackedScene" uid="uid://b2yigfjj8m4jt" path="res://Scenes/UI/PauseMenu.tscn" id="2_mpbvu"]
-[ext_resource type="Texture2D" uid="uid://b71mnhk05b3uw" path="res://Sprites/Vehicles/MinerRocket256-1.png.png" id="3_pwvc8"]
+[ext_resource type="Texture2D" uid="uid://bmpq5ivwk1aee" path="res://Sprites/Vehicles/MiningVehicle64.png" id="3_pwvc8"]
 [ext_resource type="Script" uid="uid://dyx6o0e0qd0jb" path="res://Scripts/Starfield.gd" id="4_t7r4u"]
 
 [sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_1qlup"]
@@ -78,7 +78,8 @@ tile_set = SubResource("TileSet_logic")
 [node name="PlayerMarker" type="Sprite2D" parent="MineTiles" unique_id=1933023010]
 z_index = 10
 position = Vector2(960, 20)
-scale = Vector2(0.39, 0.39)
 texture = ExtResource("3_pwvc8")
+region_enabled = true
+region_rect = Rect2(0, 0, 64, 64)
 
 [node name="PauseMenu" parent="." unique_id=705735553 instance=ExtResource("2_mpbvu")]
