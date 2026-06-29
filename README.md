@@ -11,6 +11,7 @@ This is the Codex working copy of the Godot project.
 - Large mineable asteroids trigger a short orbit-and-lander cutscene before the asteroid mining scene.
 - The asteroid mining scene has movement, gravity, collision, fuel, cargo, fog of war, and one-block mining.
 - Miner cargo displays as resource icons with counts in the mining HUD.
+- The mining HUD includes a bottom gauge cluster image with live fuel needle and depth readout overlays; depth increases by 10m per row below the surface.
 - The mining map extends downward as the player descends, with a camera follow, nearby tile reveal, and visible starting surface layers.
 - The mining surface has a landed shop ship resting above the center tile, while the miner starts two tiles to its right.
 
@@ -43,7 +44,7 @@ This is the Codex working copy of the Godot project.
 - `A/D` or arrow keys: move.
 - `W` or up arrow: thrust upward like a small rocket.
 - Hold left, right, or down toward a block to mine it. Blocks have hardness/HP, and the drill deals damage over time.
-- Block hardness increases by 1 percent per row below the surface.
+- Block hardness increases by 10 percent per row below the surface.
 - Dirt and rock do not take cargo space.
 - Ore and raw fuel fill cargo. Starting cargo capacity is 10 items.
 - Raw fuel is a coal-tinted dirt-style block that appears more often than iron but less often than copper.

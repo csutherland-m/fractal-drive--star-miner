@@ -2,6 +2,8 @@ extends Node2D
 
 const FogOverlayScript := preload("res://Scripts/FogOverlay.gd")
 const ResourceTileTexture := preload("res://Sprites/TileSets/MiningTilesVariantsDugDirt64.png")
+const GaugeClusterTexture := preload("res://Sprites/UI/gauge_cluster_concept.png")
+const GAUGE_CLUSTER_SIZE := Vector2(560.0, 320.0)
 
 enum BlockType {
 	EMPTY,
@@ -43,6 +45,7 @@ enum BlockType {
 @export var empty_top_rows: int = 4
 @export var generation_buffer_rows: int = 12
 @export var side_fog_padding_pixels: float = 300.0
+@export var depth_meters_per_row: int = 10
 @export var reveal_radius_tiles: int = 1
 @export var surface_revealed_ground_rows: int = 2
 @export var max_fuel_seconds: float = 60.0
@@ -99,7 +102,7 @@ enum BlockType {
 @export var diamond_hardness: float = 2.8
 @export var warpgems_hardness: float = 3.5
 @export var blackholecrystals_hardness: float = 3.5
-@export var depth_hardness_increase_per_row: float = 0.01
+@export var depth_hardness_increase_per_row: float = 0.1
 
 var is_paused: bool = false
 var is_shop_open: bool = false
@@ -120,6 +123,11 @@ var lander_rocket_fuel_tons: int = 0
 var starship_mining_fuel_kg: int = 0
 var hud_label: Label
 var hud_cargo_icons: VBoxContainer
+var gauge_cluster: Control
+var gauge_depth_label: Label
+var gauge_fuel_needle: ColorRect
+var gauge_heat_needle: ColorRect
+var heat_ratio: float = 0.0
 var fuel_bar: Control
 var fuel_bar_fill: ColorRect
 var fuel_bar_segments: Array[ColorRect] = []
@@ -1890,6 +1898,71 @@ func create_hud() -> void:
 	hud_cargo_icons.position = Vector2(24.0, 122.0)
 	hud_cargo_icons.add_theme_constant_override("separation", 6)
 	hud_layer.add_child(hud_cargo_icons)
+	
+	create_gauge_cluster(hud_layer)
+
+
+func create_gauge_cluster(hud_layer: CanvasLayer) -> void:
+	gauge_cluster = Control.new()
+	gauge_cluster.name = "GaugeCluster"
+	gauge_cluster.anchor_left = 0.5
+	gauge_cluster.anchor_right = 0.5
+	gauge_cluster.anchor_top = 1.0
+	gauge_cluster.anchor_bottom = 1.0
+	gauge_cluster.offset_left = -GAUGE_CLUSTER_SIZE.x * 0.5
+	gauge_cluster.offset_right = GAUGE_CLUSTER_SIZE.x * 0.5
+	gauge_cluster.offset_top = -GAUGE_CLUSTER_SIZE.y - 14.0
+	gauge_cluster.offset_bottom = -14.0
+	gauge_cluster.size = GAUGE_CLUSTER_SIZE
+	gauge_cluster.custom_minimum_size = GAUGE_CLUSTER_SIZE
+	gauge_cluster.clip_contents = true
+	gauge_cluster.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud_layer.add_child(gauge_cluster)
+	
+	var gauge_background := TextureRect.new()
+	gauge_background.name = "GaugeClusterBackground"
+	gauge_background.texture = GaugeClusterTexture
+	gauge_background.anchor_right = 1.0
+	gauge_background.anchor_bottom = 1.0
+	gauge_background.offset_left = 0.0
+	gauge_background.offset_right = 0.0
+	gauge_background.offset_top = 0.0
+	gauge_background.offset_bottom = 0.0
+	gauge_background.custom_minimum_size = Vector2.ZERO
+	gauge_background.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	gauge_background.stretch_mode = TextureRect.STRETCH_SCALE
+	gauge_background.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	gauge_cluster.add_child(gauge_background)
+	gauge_background.size = GAUGE_CLUSTER_SIZE
+	
+	gauge_fuel_needle = create_gauge_needle(Color(0.0, 0.9, 1.0, 0.92), Vector2(96.0, 166.0))
+	gauge_cluster.add_child(gauge_fuel_needle)
+	
+	gauge_heat_needle = create_gauge_needle(Color(1.0, 0.22, 0.02, 0.92), Vector2(464.0, 166.0))
+	gauge_cluster.add_child(gauge_heat_needle)
+	
+	gauge_depth_label = Label.new()
+	gauge_depth_label.name = "DepthReadout"
+	gauge_depth_label.position = Vector2(276.0, 153.0)
+	gauge_depth_label.size = Vector2(86.0, 42.0)
+	gauge_depth_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	gauge_depth_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	gauge_depth_label.add_theme_font_size_override("font_size", 30)
+	gauge_depth_label.add_theme_color_override("font_color", Color(1.0, 0.46, 0.06, 1.0))
+	gauge_depth_label.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.85))
+	gauge_depth_label.add_theme_constant_override("shadow_offset_x", 2)
+	gauge_depth_label.add_theme_constant_override("shadow_offset_y", 2)
+	gauge_cluster.add_child(gauge_depth_label)
+
+
+func create_gauge_needle(color: Color, gauge_center: Vector2) -> ColorRect:
+	var needle := ColorRect.new()
+	needle.color = color
+	needle.position = gauge_center - Vector2(12.0, 3.0)
+	needle.size = Vector2(100.0, 6.0)
+	needle.pivot_offset = Vector2(12.0, 3.0)
+	needle.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return needle
 
 
 func rebuild_fuel_bar_segments() -> void:
@@ -1949,6 +2022,7 @@ func update_hud() -> void:
 	
 	update_fuel_bar()
 	update_hud_cargo_icons()
+	update_gauge_cluster()
 	
 	hud_label.text = "Credits: %d\nCargo: %d / %d" % [
 		credits,
@@ -1979,6 +2053,26 @@ func update_hud_cargo_icons() -> void:
 		count_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		count_label.add_theme_font_size_override("font_size", 16)
 		item.add_child(count_label)
+
+
+func update_gauge_cluster() -> void:
+	if gauge_cluster == null:
+		return
+	
+	var fuel_ratio: float = clampf(fuel_seconds / maxf(max_fuel_seconds, 0.01), 0.0, 1.0)
+	if gauge_fuel_needle != null:
+		gauge_fuel_needle.rotation = lerpf(deg_to_rad(-202.0), deg_to_rad(-42.0), fuel_ratio)
+	
+	if gauge_heat_needle != null:
+		gauge_heat_needle.rotation = lerpf(deg_to_rad(158.0), deg_to_rad(-25.0), clampf(heat_ratio, 0.0, 1.0))
+	
+	if gauge_depth_label != null:
+		gauge_depth_label.text = "%04d" % get_current_depth_meters()
+
+
+func get_current_depth_meters() -> int:
+	var player_cell := get_player_cell()
+	return maxi(player_cell.y - get_first_ground_row(), 0) * depth_meters_per_row
 
 
 func _draw() -> void:

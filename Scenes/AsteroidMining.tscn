@@ -51,6 +51,8 @@ tile_size = Vector2i(64, 64)
 
 [node name="AsteroidMining" type="Node2D" unique_id=1605487641]
 script = ExtResource("1_8b7qf")
+side_fog_padding_pixels = 1000.0
+depth_hardness_increase_per_row = 0.02
 
 [node name="Starfield" type="Node2D" parent="." unique_id=1379204962]
 z_index = -100
