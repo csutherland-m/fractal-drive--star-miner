@@ -11,7 +11,7 @@ This is the Codex working copy of the Godot project.
 - Large mineable asteroids trigger a short orbit-and-lander cutscene before the asteroid mining scene.
 - The asteroid mining scene has movement, gravity, collision, fuel, cargo, fog of war, and one-block mining.
 - The mining map extends downward as the player descends, with a camera follow, nearby tile reveal, and visible starting surface layers.
-- The mining surface has a landed shop ship resting on the left side of the first ground layer, while the miner starts centered.
+- The mining surface has a landed shop ship resting above the center tile, while the miner starts two tiles to its right.
 
 ## Main Scenes
 
@@ -45,12 +45,18 @@ This is the Codex working copy of the Godot project.
 - Dirt and rock do not take cargo space.
 - Ore and raw fuel fill cargo. Starting cargo capacity is 10 items.
 - Raw fuel is a coal-tinted dirt-style block that appears more often than iron but less often than copper.
-- Fuel lasts for 60 seconds of movement.
+- Miner fuel is measured in kg, with 1 kg providing 1 second of drive time.
+- Idling consumes fuel slowly, using 1 kg every 10 seconds.
 - A segmented teal fuel bar across the top of the screen shows remaining fuel in 10-second chunks and blinks red below 30 percent.
-- The player starts with 100 gold coins.
-- Refueling costs 2 gold coins per started 10 seconds of missing fuel.
-- Touch the lander above the surface to sell ore, store ore in the warehouse, refuel, and buy the first drill and sensor upgrades.
-- Warehouse ore is safe from cargo selling and can still be used for upgrades.
+- The player starts with 100 Credits.
+- Raw fuel can be processed in the lander into 50 kg of mining fuel and 1 ton of rocket fuel per block.
+- Raw fuel that does not fit in the lander fuel tanks remains in the cargo hold.
+- The lander starts with one full miner tank worth of mining fuel.
+- Refueling the miner consumes lander mining fuel kg when available.
+- If the lander mining fuel tank is empty, emergency refueling costs 10 Credits per kg.
+- The lander has separate storage tanks for mining fuel and rocket fuel.
+- Touch the lander above the surface to deposit cargo, sell ore, process raw fuel, refuel, and buy upgrades.
+- Selling, processing, and upgrades can use resources from both miner cargo and the cargo hold.
 - `Esc`: pause.
 
 ## Recommended Next Step

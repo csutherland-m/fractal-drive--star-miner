@@ -37,20 +37,27 @@ enum BlockType {
 @export var diamond_tiles: Array[Vector2i] = [Vector2i(2, 3), Vector2i(3, 3)]
 @export var dug_dirt_tiles: Array[Vector2i] = [Vector2i(4, 3), Vector2i(5, 3), Vector2i(6, 3), Vector2i(7, 3)]
 
-@export var grid_width: int = 30
+@export var grid_width: int = 60
 @export var grid_height: int = 17
 @export var empty_top_rows: int = 4
 @export var generation_buffer_rows: int = 12
+@export var side_fog_padding_pixels: float = 300.0
 @export var reveal_radius_tiles: int = 1
 @export var surface_revealed_ground_rows: int = 2
 @export var max_fuel_seconds: float = 60.0
 @export var fuel_warning_ratio: float = 0.3
+@export var mining_fuel_seconds_per_kg: float = 1.0
+@export var idle_fuel_seconds_per_kg: float = 10.0
+@export var mining_fuel_kg_per_raw_fuel: int = 50
+@export var rocket_fuel_tons_per_raw_fuel: int = 1
+@export var max_lander_mining_fuel_kg: int = 200
+@export var max_lander_rocket_fuel_tons: int = 20
 @export var inventory_capacity: int = 10
 @export var shop_lander_texture_path: String = "res://Sprites/Vehicles/RocketLanderEdited.png"
 @export var shop_lander_scale: float = 0.75
 @export var shop_lander_bottom_padding_pixels: float = 14.0
 @export var shop_lander_ground_overlap_pixels: float = 3.0
-@export var shop_lander_surface_column: int = 5
+@export var miner_spawn_offset_from_lander_tiles: int = 2
 
 @export var gravity: float = 900.0
 @export var max_fall_speed: float = 500.0
@@ -74,10 +81,10 @@ enum BlockType {
 @export var sensor_upgrade_copper_cost: int = 1
 @export var sensor_upgrade_iron_cost: int = 1
 @export var upgraded_sensor_reveal_radius: int = 2
-@export var copper_drill_coin_cost: int = 20
-@export var sensor_upgrade_coin_cost: int = 15
-@export var starting_gold: int = 100
-@export var refuel_gold_cost_per_10_seconds: int = 2
+@export var copper_drill_credit_cost: int = 20
+@export var sensor_upgrade_credit_cost: int = 15
+@export var starting_credits: int = 100
+@export var emergency_refuel_credit_cost_per_kg: int = 10
 @export var arrival_countdown_seconds: int = 3
 @export var dirt_hardness: float = 0.735
 @export var copper_hardness: float = 1.75
@@ -101,9 +108,11 @@ var last_mine_direction: Vector2i = Vector2i.DOWN
 var player_animation_time: float = 0.0
 var block_types_by_cell: Dictionary = {}
 var resources: Dictionary = {}
-var warehouse_resources: Dictionary = {}
-var coins: int = 100
+var cargo_hold_resources: Dictionary = {}
+var credits: int = 100
 var fuel_seconds: float = 60.0
+var lander_mining_fuel_kg: int = 0
+var lander_rocket_fuel_tons: int = 0
 var hud_label: Label
 var fuel_bar: Control
 var fuel_bar_fill: ColorRect
@@ -140,8 +149,9 @@ func _ready() -> void:
 	configure_crisp_canvas_items()
 	pause_menu.resume_requested.connect(_on_resume_pressed)
 	pause_menu.quit_requested.connect(_on_quit_pressed)
-	coins = starting_gold
+	credits = starting_credits
 	fuel_seconds = max_fuel_seconds
+	lander_mining_fuel_kg = get_miner_full_tank_fuel_kg()
 	
 	generate_mine_tiles()
 	position_player_in_sky()
@@ -314,8 +324,13 @@ func pick_tile_coords(tile_options: Array[Vector2i], fallback: Vector2i) -> Vect
 
 
 func position_player_in_sky() -> void:
-	var center_column := floori(float(grid_width) / 2.0)
-	var start_cell := Vector2i(center_column, empty_top_rows - 2)
+	var lander_column := get_lander_surface_column()
+	var miner_column := clampi(
+		lander_column + miner_spawn_offset_from_lander_tiles,
+		0,
+		grid_width - 1
+	)
+	var start_cell := Vector2i(miner_column, empty_top_rows - 2)
 	player_marker.position = mine_tiles.map_to_local(start_cell)
 	player_marker.scale = Vector2(player_sprite_scale, player_sprite_scale)
 	player_marker.rotation = 0.0
@@ -327,7 +342,7 @@ func position_player_in_sky() -> void:
 
 func create_surface_shop() -> void:
 	var shop_texture := load(shop_lander_texture_path) as Texture2D
-	var lander_column := clampi(shop_lander_surface_column, 0, grid_width - 1)
+	var lander_column := get_lander_surface_column()
 	var first_ground_cell := Vector2i(lander_column, get_first_ground_row())
 	var first_ground_center := mine_tiles.map_to_local(first_ground_cell)
 	var ground_top_y := first_ground_center.y - 32.0
@@ -352,6 +367,10 @@ func create_surface_shop() -> void:
 	shop_button.texture = shop_texture
 	shop_button.scale = Vector2(shop_lander_scale, shop_lander_scale)
 	mine_tiles.add_child(shop_button)
+
+
+func get_lander_surface_column() -> int:
+	return clampi(floori(float(grid_width) / 2.0), 0, grid_width - 1)
 
 
 func check_shop_collision() -> void:
@@ -387,10 +406,12 @@ func get_player_rect(test_position: Vector2) -> Rect2:
 
 
 func drain_fuel_for_movement(delta: float) -> void:
-	if not is_movement_input_pressed():
-		return
+	var fuel_drain_rate := fuel_consumption_multiplier
 	
-	fuel_seconds = maxf(fuel_seconds - delta * fuel_consumption_multiplier, 0.0)
+	if not is_movement_input_pressed():
+		fuel_drain_rate = 1.0 / maxf(idle_fuel_seconds_per_kg, 0.01)
+	
+	fuel_seconds = maxf(fuel_seconds - delta * fuel_drain_rate, 0.0)
 	update_hud()
 	
 	if fuel_seconds <= 0.0:
@@ -729,24 +750,24 @@ func get_inventory_count() -> int:
 	return count
 
 
-func get_warehouse_count() -> int:
+func get_cargo_hold_count() -> int:
 	var count := 0
 	
-	for resource_name in warehouse_resources.keys():
-		count += int(warehouse_resources[resource_name])
+	for resource_name in cargo_hold_resources.keys():
+		count += int(cargo_hold_resources[resource_name])
 	
 	return count
 
 
 func get_total_resource_count(resource_name: String) -> int:
-	return int(resources.get(resource_name, 0)) + int(warehouse_resources.get(resource_name, 0))
+	return int(resources.get(resource_name, 0)) + int(cargo_hold_resources.get(resource_name, 0))
 
 
 func consume_resource(resource_name: String, amount: int) -> void:
-	var warehouse_count: int = int(warehouse_resources.get(resource_name, 0))
-	var from_warehouse: int = mini(warehouse_count, amount)
-	warehouse_resources[resource_name] = warehouse_count - from_warehouse
-	amount -= from_warehouse
+	var cargo_hold_count: int = int(cargo_hold_resources.get(resource_name, 0))
+	var from_cargo_hold: int = mini(cargo_hold_count, amount)
+	cargo_hold_resources[resource_name] = cargo_hold_count - from_cargo_hold
+	amount -= from_cargo_hold
 	
 	if amount <= 0:
 		return
@@ -974,6 +995,21 @@ func add_shop_button(parent: Control, text: String, callback: Callable) -> Butto
 	return button
 
 
+func apply_individual_sell_button_style(button: Button) -> void:
+	button.add_theme_stylebox_override(
+		"normal",
+		GameTheme.create_button_style(Color("#78B4CE"), Color("#526F82"), Color("#16242E"))
+	)
+	button.add_theme_stylebox_override(
+		"hover",
+		GameTheme.create_button_style(Color("#8CC8DE"), Color("#638196"), Color("#16242E"))
+	)
+	button.add_theme_stylebox_override(
+		"pressed",
+		GameTheme.create_button_style(Color("#5D91AA"), Color("#3D5A6D"), Color("#0B141B"))
+	)
+
+
 func add_shop_spacer(parent: Control) -> Control:
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1084,33 +1120,65 @@ func show_market_view() -> void:
 	clear_shop_content()
 	shop_title_label.text = "Market"
 	
-	var grid := GridContainer.new()
-	grid.columns = 3
-	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	grid.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	grid.add_theme_constant_override("h_separation", 18)
-	grid.add_theme_constant_override("v_separation", 14)
-	shop_content.add_child(grid)
+	var deposit_row := CenterContainer.new()
+	deposit_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	shop_content.add_child(deposit_row)
 	
-	add_shop_button(grid, "Store All Cargo", Callable(self, "_on_deposit_all_pressed"))
-	add_shop_button(grid, "Withdraw All That Fits", Callable(self, "_on_withdraw_all_pressed"))
-	add_shop_button(grid, "Sell All Cargo", Callable(self, "_on_sell_all_pressed"))
-	add_shop_button(grid, "Sell Copper", Callable(self, "_on_sell_copper_pressed"))
-	add_shop_button(grid, "Sell Raw Fuel", Callable(self, "_on_sell_raw_fuel_pressed"))
-	add_shop_button(grid, "Sell Iron", Callable(self, "_on_sell_iron_pressed"))
-	add_shop_button(grid, "Sell Gold", Callable(self, "_on_sell_gold_pressed"))
-	add_shop_button(grid, "Sell Treasure", Callable(self, "_on_sell_treasure_pressed"))
-	add_shop_button(grid, "Sell Diamond", Callable(self, "_on_sell_diamond_pressed"))
-	add_shop_button(grid, "Sell Warp Gems", Callable(self, "_on_sell_warp_gems_pressed"))
-	add_shop_button(grid, "Sell Black Hole Crystals", Callable(self, "_on_sell_black_hole_crystals_pressed"))
-	add_shop_button(grid, "Store Copper", Callable(self, "deposit_resource").bind("Copper"))
-	add_shop_button(grid, "Store Raw Fuel", Callable(self, "deposit_resource").bind("Raw Fuel"))
-	add_shop_button(grid, "Store Iron", Callable(self, "deposit_resource").bind("Iron"))
-	add_shop_button(grid, "Store Gold", Callable(self, "deposit_resource").bind("Gold"))
-	add_shop_button(grid, "Withdraw Copper", Callable(self, "withdraw_resource").bind("Copper"))
-	add_shop_button(grid, "Withdraw Raw Fuel", Callable(self, "withdraw_resource").bind("Raw Fuel"))
-	add_shop_button(grid, "Withdraw Iron", Callable(self, "withdraw_resource").bind("Iron"))
-	add_shop_button(grid, "Withdraw Gold", Callable(self, "withdraw_resource").bind("Gold"))
+	var deposit_button := add_shop_button(deposit_row, "Deposit All", Callable(self, "_on_deposit_all_pressed"))
+	deposit_button.custom_minimum_size = Vector2(320.0, 52.0)
+	
+	var market_columns := HBoxContainer.new()
+	market_columns.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	market_columns.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	market_columns.add_theme_constant_override("separation", 14)
+	shop_content.add_child(market_columns)
+	
+	var sell_column := VBoxContainer.new()
+	sell_column.custom_minimum_size = Vector2(280.0, 0.0)
+	sell_column.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	sell_column.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	sell_column.add_theme_constant_override("separation", 10)
+	market_columns.add_child(sell_column)
+	
+	add_shop_button(sell_column, "Sell All", Callable(self, "_on_sell_all_pressed"))
+	
+	var sell_buttons := [
+		["Sell Copper", Callable(self, "_on_sell_copper_pressed")],
+		["Sell Raw Fuel", Callable(self, "_on_sell_raw_fuel_pressed")],
+		["Sell Iron", Callable(self, "_on_sell_iron_pressed")],
+		["Sell Gold", Callable(self, "_on_sell_gold_pressed")],
+		["Sell Treasure", Callable(self, "_on_sell_treasure_pressed")],
+		["Sell Diamond", Callable(self, "_on_sell_diamond_pressed")],
+		["Sell Warp Gems", Callable(self, "_on_sell_warp_gems_pressed")],
+		["Sell Black Hole Crystals", Callable(self, "_on_sell_black_hole_crystals_pressed")],
+	]
+	
+	for sell_button_definition in sell_buttons:
+		var button_text: String = String(sell_button_definition[0])
+		var button_callback: Callable = sell_button_definition[1]
+		var button := add_shop_button(
+			sell_column,
+			button_text,
+			button_callback
+		)
+		apply_individual_sell_button_style(button)
+	
+	var middle_space := Control.new()
+	middle_space.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	market_columns.add_child(middle_space)
+	
+	var process_column := VBoxContainer.new()
+	process_column.custom_minimum_size = Vector2(280.0, 0.0)
+	process_column.size_flags_horizontal = Control.SIZE_SHRINK_END
+	process_column.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	process_column.add_theme_constant_override("separation", 10)
+	market_columns.add_child(process_column)
+	
+	var process_offset := Control.new()
+	process_offset.custom_minimum_size = Vector2(0.0, 56.0)
+	process_column.add_child(process_offset)
+	
+	add_shop_button(process_column, "Process Raw Fuel", Callable(self, "process_raw_fuel_from_storage"))
 	
 	add_shop_button(shop_content, "Back", Callable(self, "show_shop_main_view"))
 	update_shop_ui()
@@ -1123,31 +1191,31 @@ func initialize_upgrade_definitions() -> void:
 			make_upgrade("miner_cargo_capacity", "Cargo Capacity", [{"resource": "Iron", "amount": 3}], "Miner cargo capacity increases 10% per level."),
 			make_upgrade("miner_fuel_tank", "Fuel Tank", [{"resource": "Copper", "amount": 2}, {"resource": "Iron", "amount": 2}, {"resource": "Gold", "amount": 1}], "Miner fuel capacity increases 10% per level."),
 			make_upgrade("miner_engine_power", "Engine Power", [{"resource": "Copper", "amount": 2}, {"resource": "Iron", "amount": 2}, {"resource": "Gold", "amount": 1}], "Vehicle speed increases 5% per level."),
-			make_upgrade("miner_engine_efficiency", "Engine Efficiency", [{"resource": "Copper", "amount": 1}, {"resource": "Iron", "amount": 1}, {"resource": "Gold Coins", "amount": 10}], "Movement fuel use improves 10% per level."),
-			make_upgrade("miner_hull_strength", "Hull Strength", [{"resource": "Iron", "amount": 2}, {"resource": "Gold", "amount": 1}, {"resource": "Gold Coins", "amount": 10}], "Placeholder hull durability bonus."),
-			make_upgrade("miner_sensor_strength", "Sensor Strength", [{"resource": "Copper", "amount": 1}, {"resource": "Iron", "amount": 1}, {"resource": "Gold Coins", "amount": 10}], "Mining reveal radius improves over time."),
+			make_upgrade("miner_engine_efficiency", "Engine Efficiency", [{"resource": "Copper", "amount": 1}, {"resource": "Iron", "amount": 1}, {"resource": "Credits", "amount": 10}], "Movement fuel use improves 10% per level."),
+			make_upgrade("miner_hull_strength", "Hull Strength", [{"resource": "Iron", "amount": 2}, {"resource": "Gold", "amount": 1}, {"resource": "Credits", "amount": 10}], "Placeholder hull durability bonus."),
+			make_upgrade("miner_sensor_strength", "Sensor Strength", [{"resource": "Copper", "amount": 1}, {"resource": "Iron", "amount": 1}, {"resource": "Credits", "amount": 10}], "Mining reveal radius improves over time."),
 		],
 		"Lander": [
-			make_upgrade("lander_cargo_capacity", "Cargo Capacity", [{"resource": "Iron", "amount": 2}, {"resource": "Gold Coins", "amount": 10}], "Lander storage increases 10% per level."),
-			make_upgrade("lander_fuel_storage_capacity", "Fuel Storage Capacity", [{"resource": "Copper", "amount": 2}, {"resource": "Iron", "amount": 1}, {"resource": "Gold Coins", "amount": 10}], "Lander fuel storage increases 10% per level."),
-			make_upgrade("lander_ore_transfer_rate", "Ore Transfer Rate", [{"resource": "Copper", "amount": 1}, {"resource": "Iron", "amount": 1}, {"resource": "Gold Coins", "amount": 10}], "Ore transfer speed increases 10% per level."),
-			make_upgrade("lander_fuel_plant_speed", "Fuel Plant Speed", [{"resource": "Copper", "amount": 2}, {"resource": "Raw Fuel", "amount": 1}, {"resource": "Gold Coins", "amount": 10}], "Fuel processing speed increases 10% per level."),
-			make_upgrade("lander_fuel_plant_efficiency", "Fuel Plant Efficiency", [{"resource": "Iron", "amount": 1}, {"resource": "Raw Fuel", "amount": 2}, {"resource": "Gold Coins", "amount": 10}], "Fuel output improves 10% per level."),
-			make_upgrade("lander_repair_station", "Repair Station", [{"resource": "Iron", "amount": 2}, {"resource": "Gold", "amount": 1}, {"resource": "Gold Coins", "amount": 10}], "Repair strength improves 10% per level."),
-			make_upgrade("lander_upgrade_station", "Upgrade Station", [{"resource": "Copper", "amount": 2}, {"resource": "Iron", "amount": 2}, {"resource": "Gold Coins", "amount": 10}], "Upgrade station capability improves 10% per level."),
+			make_upgrade("lander_cargo_capacity", "Cargo Capacity", [{"resource": "Iron", "amount": 2}, {"resource": "Credits", "amount": 10}], "Lander storage increases 10% per level."),
+			make_upgrade("lander_fuel_storage_capacity", "Fuel Storage Capacity", [{"resource": "Copper", "amount": 2}, {"resource": "Iron", "amount": 1}, {"resource": "Credits", "amount": 10}], "Lander fuel storage increases 10% per level."),
+			make_upgrade("lander_ore_transfer_rate", "Ore Transfer Rate", [{"resource": "Copper", "amount": 1}, {"resource": "Iron", "amount": 1}, {"resource": "Credits", "amount": 10}], "Ore transfer speed increases 10% per level."),
+			make_upgrade("lander_fuel_plant_speed", "Fuel Plant Speed", [{"resource": "Copper", "amount": 2}, {"resource": "Raw Fuel", "amount": 1}, {"resource": "Credits", "amount": 10}], "Fuel processing speed increases 10% per level."),
+			make_upgrade("lander_fuel_plant_efficiency", "Fuel Plant Efficiency", [{"resource": "Iron", "amount": 1}, {"resource": "Raw Fuel", "amount": 2}, {"resource": "Credits", "amount": 10}], "Fuel output improves 10% per level."),
+			make_upgrade("lander_repair_station", "Repair Station", [{"resource": "Iron", "amount": 2}, {"resource": "Gold", "amount": 1}, {"resource": "Credits", "amount": 10}], "Repair strength improves 10% per level."),
+			make_upgrade("lander_upgrade_station", "Upgrade Station", [{"resource": "Copper", "amount": 2}, {"resource": "Iron", "amount": 2}, {"resource": "Credits", "amount": 10}], "Upgrade station capability improves 10% per level."),
 		],
 		"Starship": [
-			make_upgrade("starship_fuel_capacity", "Fuel Capacity", [{"resource": "Copper", "amount": 2}, {"resource": "Raw Fuel", "amount": 2}, {"resource": "Gold Coins", "amount": 10}], "Starship fuel capacity increases 10% per level."),
-			make_upgrade("starship_ltl_drive_performance", "LTL Drive Performance", [{"resource": "Copper", "amount": 2}, {"resource": "Iron", "amount": 1}, {"resource": "Gold Coins", "amount": 10}], "LTL drive performance increases 10% per level."),
-			make_upgrade("starship_ftl_drive_performance", "FTL Drive Performance", [{"resource": "Iron", "amount": 2}, {"resource": "Gold", "amount": 1}, {"resource": "Gold Coins", "amount": 10}], "FTL drive performance increases 10% per level."),
-			make_upgrade("starship_sensor_range", "Sensor Range", [{"resource": "Copper", "amount": 1}, {"resource": "Iron", "amount": 1}, {"resource": "Gold Coins", "amount": 10}], "Starship sensor range increases 10% per level."),
-			make_upgrade("starship_hull_strength", "Hull Strength", [{"resource": "Iron", "amount": 2}, {"resource": "Gold", "amount": 1}, {"resource": "Gold Coins", "amount": 10}], "Starship hull strength increases 10% per level."),
-			make_upgrade("starship_modification", "Modification", [{"resource": "Copper", "amount": 2}, {"resource": "Iron", "amount": 2}, {"resource": "Gold Coins", "amount": 10}], "Future module panel placeholder."),
+			make_upgrade("starship_fuel_capacity", "Fuel Capacity", [{"resource": "Copper", "amount": 2}, {"resource": "Raw Fuel", "amount": 2}, {"resource": "Credits", "amount": 10}], "Starship fuel capacity increases 10% per level."),
+			make_upgrade("starship_ltl_drive_performance", "LTL Drive Performance", [{"resource": "Copper", "amount": 2}, {"resource": "Iron", "amount": 1}, {"resource": "Credits", "amount": 10}], "LTL drive performance increases 10% per level."),
+			make_upgrade("starship_ftl_drive_performance", "FTL Drive Performance", [{"resource": "Iron", "amount": 2}, {"resource": "Gold", "amount": 1}, {"resource": "Credits", "amount": 10}], "FTL drive performance increases 10% per level."),
+			make_upgrade("starship_sensor_range", "Sensor Range", [{"resource": "Copper", "amount": 1}, {"resource": "Iron", "amount": 1}, {"resource": "Credits", "amount": 10}], "Starship sensor range increases 10% per level."),
+			make_upgrade("starship_hull_strength", "Hull Strength", [{"resource": "Iron", "amount": 2}, {"resource": "Gold", "amount": 1}, {"resource": "Credits", "amount": 10}], "Starship hull strength increases 10% per level."),
+			make_upgrade("starship_modification", "Modification", [{"resource": "Copper", "amount": 2}, {"resource": "Iron", "amount": 2}, {"resource": "Credits", "amount": 10}], "Future module panel placeholder."),
 		],
 		"Global": [
-			make_upgrade("global_market_rates", "Market Rates", [{"resource": "Copper", "amount": 1}, {"resource": "Iron", "amount": 1}, {"resource": "Gold Coins", "amount": 10}], "Future sell-price bonus placeholder."),
-			make_upgrade("global_mining_data", "Mining Data", [{"resource": "Copper", "amount": 1}, {"resource": "Gold Coins", "amount": 10}], "Future asteroid intel placeholder."),
-			make_upgrade("global_fleet_logistics", "Fleet Logistics", [{"resource": "Iron", "amount": 1}, {"resource": "Gold Coins", "amount": 10}], "Future shared capacity placeholder."),
+			make_upgrade("global_market_rates", "Market Rates", [{"resource": "Copper", "amount": 1}, {"resource": "Iron", "amount": 1}, {"resource": "Credits", "amount": 10}], "Future sell-price bonus placeholder."),
+			make_upgrade("global_mining_data", "Mining Data", [{"resource": "Copper", "amount": 1}, {"resource": "Credits", "amount": 10}], "Future asteroid intel placeholder."),
+			make_upgrade("global_fleet_logistics", "Fleet Logistics", [{"resource": "Iron", "amount": 1}, {"resource": "Credits", "amount": 10}], "Future shared capacity placeholder."),
 		],
 	}
 
@@ -1167,7 +1235,7 @@ func get_upgrade_costs(definition: Dictionary, level: int) -> Array:
 		var resource_name: String = String(base_cost["resource"])
 		var base_amount: int = int(base_cost["amount"])
 		var amount := base_amount + level
-		if resource_name == "Gold Coins":
+		if resource_name == "Credits":
 			amount = base_amount * (level + 1)
 		costs.append({"resource": resource_name, "amount": amount})
 	return costs
@@ -1196,8 +1264,8 @@ func can_afford_upgrade(costs: Array) -> bool:
 	for cost in costs:
 		var resource_name: String = String(cost["resource"])
 		var amount: int = int(cost["amount"])
-		if resource_name == "Gold Coins":
-			if coins < amount:
+		if resource_name == "Credits":
+			if credits < amount:
 				return false
 		elif get_total_resource_count(resource_name) < amount:
 			return false
@@ -1208,8 +1276,8 @@ func pay_upgrade_costs(costs: Array) -> void:
 	for cost in costs:
 		var resource_name: String = String(cost["resource"])
 		var amount: int = int(cost["amount"])
-		if resource_name == "Gold Coins":
-			coins -= amount
+		if resource_name == "Credits":
+			credits -= amount
 		else:
 			consume_resource(resource_name, amount)
 
@@ -1263,10 +1331,16 @@ func apply_upgrade_effect(upgrade_id: String, new_level: int) -> void:
 		"miner_sensor_strength":
 			reveal_radius_tiles = maxi(reveal_radius_tiles, 1 + ceili(float(new_level) / 2.0))
 			update_revealed_cells()
+		"lander_fuel_storage_capacity":
+			max_lander_mining_fuel_kg = ceili(float(max_lander_mining_fuel_kg) * 1.1)
+			max_lander_rocket_fuel_tons = ceili(float(max_lander_rocket_fuel_tons) * 1.1)
 
 
 func get_refuel_button_text() -> String:
-	return "Refuel\n%d Gold" % get_full_refuel_cost()
+	var needed_kg := get_mining_fuel_kg_needed_for_full_refuel()
+	if lander_mining_fuel_kg > 0:
+		return "Refuel\n%d kg Mining Fuel" % mini(needed_kg, lander_mining_fuel_kg)
+	return "Refuel\n%d Credits" % get_emergency_refuel_credit_cost(needed_kg)
 
 
 func open_shop() -> void:
@@ -1292,20 +1366,25 @@ func update_shop_ui() -> void:
 	if shop_status_label == null:
 		return
 	
-	var refuel_cost := get_full_refuel_cost()
+	var refuel_kg := get_mining_fuel_kg_needed_for_full_refuel()
 	if refuel_button != null:
 		refuel_button.text = get_refuel_button_text()
-		refuel_button.disabled = refuel_cost <= 0 or coins < refuel_cost
+		refuel_button.disabled = (
+			refuel_kg <= 0
+			or (lander_mining_fuel_kg <= 0 and credits < emergency_refuel_credit_cost_per_kg)
+		)
 	
 	shop_status_label.text = (
-		"Gold Coins: %d   Fuel: %.1f / %.1fs   Cargo: %d / %d   Warehouse: %d items"
+		"Credits: %d   Cargo: %d / %d   Cargo Hold: %d items\nMining Fuel: %d / %d kg   Rocket Fuel: %d / %d tons"
 		% [
-			coins,
-			fuel_seconds,
-			max_fuel_seconds,
+			credits,
 			get_inventory_count(),
 			inventory_capacity,
-			get_warehouse_count()
+			get_cargo_hold_count(),
+			lander_mining_fuel_kg,
+			max_lander_mining_fuel_kg,
+			lander_rocket_fuel_tons,
+			max_lander_rocket_fuel_tons
 		]
 	)
 
@@ -1328,14 +1407,14 @@ func get_drill_upgrade_text() -> String:
 	if has_copper_drill_upgrade:
 		return "Copper Drill: purchased"
 	
-	return "Copper Drill: 20 Gold + 5 Copper (+25% drill damage)"
+	return "Copper Drill: 20 Credits + 5 Copper (+25% drill damage)"
 
 
 func get_sensor_upgrade_text() -> String:
 	if has_sensor_upgrade:
 		return "Sensors: purchased"
 	
-	return "Sensors: 15 Gold + 1 Copper + 1 Iron (vision radius 2)"
+	return "Sensors: 15 Credits + 1 Copper + 1 Iron (vision radius 2)"
 
 
 func get_sellable_resource_names() -> Array[String]:
@@ -1352,13 +1431,14 @@ func get_sellable_resource_names() -> Array[String]:
 
 
 func sell_resource(resource_name: String) -> void:
-	var count: int = int(resources.get(resource_name, 0))
+	var count: int = get_total_resource_count(resource_name)
 	
 	if count <= 0:
 		return
 	
-	coins += count * get_resource_value(resource_name)
+	credits += count * get_resource_value(resource_name)
 	resources[resource_name] = 0
+	cargo_hold_resources[resource_name] = 0
 	update_shop_ui()
 	update_hud()
 
@@ -1369,22 +1449,38 @@ func deposit_resource(resource_name: String) -> void:
 	if count <= 0:
 		return
 	
-	warehouse_resources[resource_name] = int(warehouse_resources.get(resource_name, 0)) + count
+	cargo_hold_resources[resource_name] = int(cargo_hold_resources.get(resource_name, 0)) + count
 	resources[resource_name] = 0
 	update_shop_ui()
 	update_hud()
 
 
-func withdraw_resource(resource_name: String) -> void:
-	var stored_count: int = int(warehouse_resources.get(resource_name, 0))
-	var cargo_room: int = inventory_capacity - get_inventory_count()
-	var amount: int = mini(stored_count, cargo_room)
+func process_raw_fuel_from_storage() -> void:
+	var raw_fuel_count: int = get_total_resource_count("Raw Fuel")
 	
-	if amount <= 0:
+	if raw_fuel_count <= 0:
 		return
 	
-	warehouse_resources[resource_name] = stored_count - amount
-	resources[resource_name] = int(resources.get(resource_name, 0)) + amount
+	var mining_fuel_room: int = maxi(max_lander_mining_fuel_kg - lander_mining_fuel_kg, 0)
+	var rocket_fuel_room: int = maxi(max_lander_rocket_fuel_tons - lander_rocket_fuel_tons, 0)
+	var raw_fuel_limited_by_mining_tank: int = floori(float(mining_fuel_room) / float(mining_fuel_kg_per_raw_fuel))
+	var raw_fuel_limited_by_rocket_tank: int = floori(float(rocket_fuel_room) / float(rocket_fuel_tons_per_raw_fuel))
+	var raw_fuel_to_process: int = mini(
+		raw_fuel_count,
+		mini(raw_fuel_limited_by_mining_tank, raw_fuel_limited_by_rocket_tank)
+	)
+	var raw_fuel_to_store: int = raw_fuel_count - raw_fuel_to_process
+	
+	resources["Raw Fuel"] = 0
+	cargo_hold_resources["Raw Fuel"] = 0
+	
+	if raw_fuel_to_process > 0:
+		lander_mining_fuel_kg += raw_fuel_to_process * mining_fuel_kg_per_raw_fuel
+		lander_rocket_fuel_tons += raw_fuel_to_process * rocket_fuel_tons_per_raw_fuel
+	
+	if raw_fuel_to_store > 0:
+		cargo_hold_resources["Raw Fuel"] = raw_fuel_to_store
+	
 	update_shop_ui()
 	update_hud()
 
@@ -1397,19 +1493,13 @@ func _on_deposit_all_pressed() -> void:
 	update_hud()
 
 
-func _on_withdraw_all_pressed() -> void:
-	for resource_name in get_sellable_resource_names():
-		withdraw_resource(resource_name)
-	
-	update_shop_ui()
-	update_hud()
-
-
 func _on_sell_all_pressed() -> void:
 	for resource_name in get_sellable_resource_names():
-		var count: int = int(resources.get(resource_name, 0))
-		coins += count * get_resource_value(resource_name)
-		resources[resource_name] = 0
+		var count: int = get_total_resource_count(resource_name)
+		if count > 0:
+			credits += count * get_resource_value(resource_name)
+			resources[resource_name] = 0
+			cargo_hold_resources[resource_name] = 0
 	
 	update_shop_ui()
 	update_hud()
@@ -1448,22 +1538,39 @@ func _on_sell_black_hole_crystals_pressed() -> void:
 
 
 func _on_refuel_pressed() -> void:
-	var refuel_cost: int = get_full_refuel_cost()
+	var needed_kg := get_mining_fuel_kg_needed_for_full_refuel()
+	var kg_to_use: int = mini(needed_kg, lander_mining_fuel_kg)
 	
-	if refuel_cost <= 0 or coins < refuel_cost:
-		update_shop_ui()
-		return
+	if kg_to_use > 0:
+		lander_mining_fuel_kg -= kg_to_use
+	else:
+		kg_to_use = mini(needed_kg, floori(float(credits) / float(emergency_refuel_credit_cost_per_kg)))
+		
+		if kg_to_use <= 0:
+			update_shop_ui()
+			return
+		
+		credits -= get_emergency_refuel_credit_cost(kg_to_use)
 	
-	coins -= refuel_cost
-	fuel_seconds = max_fuel_seconds
+	fuel_seconds = minf(
+		fuel_seconds + float(kg_to_use) * mining_fuel_seconds_per_kg,
+		max_fuel_seconds
+	)
 	update_shop_ui()
 	update_hud()
 
 
-func get_full_refuel_cost() -> int:
+func get_mining_fuel_kg_needed_for_full_refuel() -> int:
 	var missing_fuel: float = max_fuel_seconds - fuel_seconds
-	var ten_second_chunks: int = ceili(missing_fuel / 10.0)
-	return ten_second_chunks * refuel_gold_cost_per_10_seconds
+	return ceili(missing_fuel / mining_fuel_seconds_per_kg)
+
+
+func get_miner_full_tank_fuel_kg() -> int:
+	return ceili(max_fuel_seconds / mining_fuel_seconds_per_kg)
+
+
+func get_emergency_refuel_credit_cost(fuel_kg: int) -> int:
+	return fuel_kg * emergency_refuel_credit_cost_per_kg
 
 
 func _on_buy_copper_drill_pressed() -> void:
@@ -1472,11 +1579,11 @@ func _on_buy_copper_drill_pressed() -> void:
 	
 	var copper_count: int = get_total_resource_count("Copper")
 	
-	if coins < copper_drill_coin_cost or copper_count < copper_drill_cost:
+	if credits < copper_drill_credit_cost or copper_count < copper_drill_cost:
 		update_shop_ui()
 		return
 	
-	coins -= copper_drill_coin_cost
+	credits -= copper_drill_credit_cost
 	consume_resource("Copper", copper_drill_cost)
 	drill_damage_per_second *= copper_drill_damage_multiplier
 	has_copper_drill_upgrade = true
@@ -1493,14 +1600,14 @@ func _on_buy_sensor_upgrade_pressed() -> void:
 	var iron_count: int = get_total_resource_count("Iron")
 	
 	if (
-		coins < sensor_upgrade_coin_cost
+		credits < sensor_upgrade_credit_cost
 		or copper_count < sensor_upgrade_copper_cost
 		or iron_count < sensor_upgrade_iron_cost
 	):
 		update_shop_ui()
 		return
 	
-	coins -= sensor_upgrade_coin_cost
+	credits -= sensor_upgrade_credit_cost
 	consume_resource("Copper", sensor_upgrade_copper_cost)
 	consume_resource("Iron", sensor_upgrade_iron_cost)
 	reveal_radius_tiles = upgraded_sensor_reveal_radius
@@ -1712,33 +1819,10 @@ func update_hud() -> void:
 	if resource_lines.is_empty():
 		resource_lines.append("No ore in cargo")
 	
-	var mining_status := "Mining: idle"
-	
-	if active_mining_cell != Vector2i(-9999, -9999):
-		var block_type: BlockType = block_types_by_cell.get(active_mining_cell, BlockType.ROCK)
-		var block_name := get_resource_name_for_block_type(block_type)
-		var estimated_time_remaining: float = (
-			active_block_hardness - active_mining_damage
-		) / maxf(drill_damage_per_second, 0.01)
-		mining_status = "Mining %s: %.1f / %.1f HP (%.1fs left)" % [
-			block_name,
-			minf(active_mining_damage, active_block_hardness),
-			active_block_hardness,
-			maxf(estimated_time_remaining, 0.0)
-		]
-	
-	var shop_status := "Find the gray shop box at the surface to sell, refuel, and upgrade."
-	if is_shop_open:
-		shop_status = "Shop open"
-	
-	hud_label.text = "Fuel: %.1fs / %.1fs\nGold Coins: %d\nCargo: %d / %d\n%s\n%s\n\n%s" % [
-		fuel_seconds,
-		max_fuel_seconds,
-		coins,
+	hud_label.text = "Credits: %d\nCargo: %d / %d\n\n%s" % [
+		credits,
 		get_inventory_count(),
 		inventory_capacity,
-		shop_status,
-		mining_status,
 		"\n".join(resource_lines)
 	]
 
@@ -1779,3 +1863,4 @@ func _on_resume_pressed() -> void:
 
 func _on_quit_pressed() -> void:
 	get_tree().quit()
+
