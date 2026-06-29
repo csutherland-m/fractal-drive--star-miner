@@ -3,7 +3,16 @@ extends Node2D
 const FogOverlayScript := preload("res://Scripts/FogOverlay.gd")
 const ResourceTileTexture := preload("res://Sprites/TileSets/MiningTilesVariantsDugDirt64.png")
 const GaugeClusterTexture := preload("res://Sprites/UI/gauge_cluster_concept.png")
+const FuelDepotTexture := preload("res://Sprites/UI/fuel_depot_placeholder.png")
+const FuelStationTexture := preload("res://Sprites/UI/fuel_station_placeholder.png")
+const FuelPipeTexture := preload("res://Sprites/UI/fuel_pipe_placeholder.png")
+const FuelPipeHorizontalTexture := preload("res://Sprites/UI/fuel_pipe_horizontal_placeholder.png")
+const FuelPipeVerticalTexture := preload("res://Sprites/UI/fuel_pipe_vertical_placeholder.png")
 const GAUGE_CLUSTER_SIZE := Vector2(560.0, 320.0)
+const HUD_LAYER_INDEX := 5
+const SHOP_LAYER_INDEX := 10
+const TERRAIN_FOREGROUND_Z_INDEX := 8
+const PLAYER_Z_INDEX := 10
 
 enum BlockType {
 	EMPTY,
@@ -41,9 +50,10 @@ enum BlockType {
 @export var dug_dirt_tiles: Array[Vector2i] = [Vector2i(4, 3), Vector2i(5, 3), Vector2i(6, 3), Vector2i(7, 3)]
 
 @export var grid_width: int = 60
-@export var grid_height: int = 17
+@export var grid_height: int = 51
 @export var empty_top_rows: int = 4
 @export var generation_buffer_rows: int = 12
+@export var depth_distribution_full_row: int = 240
 @export var side_fog_padding_pixels: float = 300.0
 @export var depth_meters_per_row: int = 10
 @export var reveal_radius_tiles: int = 1
@@ -56,9 +66,15 @@ enum BlockType {
 @export var rocket_fuel_tons_per_raw_fuel: int = 1
 @export var max_lander_mining_fuel_kg: int = 200
 @export var max_lander_rocket_fuel_tons: int = 20
+@export var return_to_starship_required_rocket_fuel_tons: int = 20
+@export var fuel_processing_seconds_per_ton: float = 30.0
+@export var fuel_depot_rocket_fuel_capacity_bonus: int = 20
 @export var max_starship_mining_fuel_kg: int = 7000
 @export var starting_starship_mining_fuel_kg: int = 1000
-@export var inventory_capacity: int = 10
+@export var inventory_capacity: int = 100
+@export var cargo_hold_capacity: int = 5000
+@export var ore_yield_min: int = 2
+@export var ore_yield_max: int = 10
 @export var shop_lander_texture_path: String = "res://Sprites/Vehicles/RocketLanderEdited.png"
 @export var shop_lander_scale: float = 0.75
 @export var shop_lander_bottom_padding_pixels: float = 14.0
@@ -67,7 +83,7 @@ enum BlockType {
 
 @export var gravity: float = 900.0
 @export var max_fall_speed: float = 500.0
-@export var move_speed: float = 154.0
+@export var move_speed: float = 200.0
 @export var ground_acceleration: float = 650.0
 @export var air_acceleration: float = 450.0
 @export var ground_deceleration: float = 850.0
@@ -80,7 +96,7 @@ enum BlockType {
 @export var player_animation_frames: int = 4
 @export var player_animation_fps: float = 10.0
 
-@export var drill_damage_per_second: float = 1.0
+@export var drill_damage_per_second: float = 1.5
 @export var copper_drill_cost: int = 5
 @export var copper_drill_damage_multiplier: float = 1.25
 @export var copper_drill_tint: Color = Color("#C87533")
@@ -91,6 +107,7 @@ enum BlockType {
 @export var sensor_upgrade_credit_cost: int = 15
 @export var starting_credits: int = 100
 @export var emergency_refuel_credit_cost_per_kg: int = 10
+@export var upgrade_resource_cost_scale: int = 10
 @export var arrival_countdown_seconds: int = 3
 @export var dirt_hardness: float = 0.735
 @export var copper_hardness: float = 1.75
@@ -141,9 +158,19 @@ var shop_content: Control
 var shop_title_label: Label
 var lander_cargo_hold_list: VBoxContainer
 var refuel_button: Button
+var return_to_starship_button: Button
+var return_to_starship_status_label: Label
+var fuel_processing_status_label: Label
 var upgrade_levels: Dictionary = {}
 var upgrade_definitions: Dictionary = {}
 var fuel_consumption_multiplier: float = 1.0
+var fuel_processing_active: bool = false
+var fuel_processing_remaining_seconds: float = 0.0
+var has_fuel_depot: bool = false
+var fuel_depot_sprite: Sprite2D
+var fuel_depot_pipe_sprite: Sprite2D
+var planned_filling_stations: Array[Dictionary] = []
+var planned_pipe_connections: Array[Dictionary] = []
 var game_over_label: Label
 var countdown_label: Label
 var mining_camera: Camera2D
@@ -164,6 +191,7 @@ func _ready() -> void:
 	configure_crisp_canvas_items()
 	pause_menu.resume_requested.connect(_on_resume_pressed)
 	pause_menu.quit_requested.connect(_on_quit_pressed)
+	initialize_planetary_infrastructure_hooks()
 	credits = starting_credits
 	fuel_seconds = max_fuel_seconds
 	starship_mining_fuel_kg = mini(starting_starship_mining_fuel_kg, max_starship_mining_fuel_kg)
@@ -181,6 +209,18 @@ func _ready() -> void:
 	update_revealed_cells()
 	update_camera()
 	update_hud()
+
+
+func _process(delta: float) -> void:
+	update_fuel_processing(delta)
+
+
+func initialize_planetary_infrastructure_hooks() -> void:
+	# TODO: Build filling stations as placeable underground refuel points.
+	planned_filling_stations = []
+	# TODO: Store pipe connections from the Fuel Depot to filling stations.
+	planned_pipe_connections = []
+	# TODO: Validate future pipe paths with simple straight-line checks before construction.
 
 
 func configure_crisp_canvas_items() -> void:
@@ -252,51 +292,51 @@ func generate_rows_until(target_row_count: int) -> void:
 
 
 func choose_block_type_for_depth(y: int) -> BlockType:
-	var depth_ratio: float = minf(float(y) / 80.0, 1.0)
+	var depth_ratio: float = minf(float(y) / float(depth_distribution_full_row), 1.0)
 	var roll := randf()
 	
 	if depth_ratio < 0.30:
-		if roll < 0.70:
+		if roll < 0.84475:
 			return BlockType.DIRT
-		elif roll < 0.965:
+		elif roll < 0.97725:
 			return BlockType.ROCK
-		elif roll < 0.987:
+		elif roll < 0.99155:
 			return BlockType.COPPER
 		else:
 			return BlockType.RAWFUEL
 	elif depth_ratio < 0.65:
-		if roll < 0.45:
+		if roll < 0.701:
 			return BlockType.DIRT
-		elif roll < 0.84:
+		elif roll < 0.896:
 			return BlockType.ROCK
-		elif roll < 0.91:
+		elif roll < 0.9415:
 			return BlockType.COPPER
-		elif roll < 0.96:
+		elif roll < 0.974:
 			return BlockType.RAWFUEL
-		elif roll < 0.985:
+		elif roll < 0.99025:
 			return BlockType.IRON
-		elif roll < 0.995:
+		elif roll < 0.99675:
 			return BlockType.GOLD
 		else:
 			return BlockType.TREASURE
 	else:
-		if roll < 0.20:
+		if roll < 0.558:
 			return BlockType.DIRT
-		elif roll < 0.72:
+		elif roll < 0.818:
 			return BlockType.ROCK
-		elif roll < 0.80:
-			return BlockType.COPPER
 		elif roll < 0.87:
+			return BlockType.COPPER
+		elif roll < 0.9155:
 			return BlockType.RAWFUEL
-		elif roll < 0.92:
+		elif roll < 0.948:
 			return BlockType.IRON
-		elif roll < 0.955:
+		elif roll < 0.97075:
 			return BlockType.GOLD
-		elif roll < 0.98:
+		elif roll < 0.987:
 			return BlockType.TREASURE
-		elif roll < 0.992:
+		elif roll < 0.9948:
 			return BlockType.DIAMOND
-		elif roll < 0.997:
+		elif roll < 0.99805:
 			return BlockType.WARPGEMS
 		else:
 			return BlockType.BLACKHOLECRYSTALS
@@ -352,7 +392,7 @@ func position_player_in_sky() -> void:
 	player_marker.rotation = 0.0
 	player_marker.region_enabled = true
 	player_marker.region_rect = Rect2(0.0, 0.0, 64.0, 64.0)
-	player_marker.z_index = 10
+	player_marker.z_index = PLAYER_Z_INDEX
 	player_velocity = Vector2.ZERO
 
 
@@ -383,6 +423,49 @@ func create_surface_shop() -> void:
 	shop_button.texture = shop_texture
 	shop_button.scale = Vector2(shop_lander_scale, shop_lander_scale)
 	mine_tiles.add_child(shop_button)
+
+
+func build_fuel_depot() -> void:
+	if has_fuel_depot:
+		return
+	
+	has_fuel_depot = true
+	max_lander_rocket_fuel_tons += fuel_depot_rocket_fuel_capacity_bonus
+	create_fuel_depot_visuals()
+	refresh_lander_view_or_shop_ui()
+	update_hud()
+
+
+func create_fuel_depot_visuals() -> void:
+	var lander_column := get_lander_surface_column()
+	var depot_column: int = clampi(lander_column - 2, 0, grid_width - 1)
+	var ground_cell := Vector2i(depot_column, get_first_ground_row())
+	var ground_center := mine_tiles.map_to_local(ground_cell)
+	var ground_top_y := ground_center.y - 32.0
+	
+	fuel_depot_sprite = Sprite2D.new()
+	fuel_depot_sprite.name = "FuelDepot"
+	fuel_depot_sprite.texture = FuelDepotTexture
+	fuel_depot_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	fuel_depot_sprite.z_index = TERRAIN_FOREGROUND_Z_INDEX
+	var depot_scale: float = minf(64.0 / FuelDepotTexture.get_width(), 128.0 / FuelDepotTexture.get_height())
+	fuel_depot_sprite.scale = Vector2(depot_scale, depot_scale)
+	var depot_height: float = FuelDepotTexture.get_height() * depot_scale
+	fuel_depot_sprite.position = Vector2(ground_center.x, ground_top_y - depot_height * 0.5 + 4.0)
+	mine_tiles.add_child(fuel_depot_sprite)
+	
+	fuel_depot_pipe_sprite = Sprite2D.new()
+	fuel_depot_pipe_sprite.name = "FuelDepotPipe"
+	fuel_depot_pipe_sprite.texture = FuelPipeHorizontalTexture
+	fuel_depot_pipe_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	fuel_depot_pipe_sprite.z_index = TERRAIN_FOREGROUND_Z_INDEX
+	var pipe_scale: float = minf(92.0 / FuelPipeHorizontalTexture.get_width(), 18.0 / FuelPipeHorizontalTexture.get_height())
+	fuel_depot_pipe_sprite.scale = Vector2(pipe_scale, pipe_scale)
+	fuel_depot_pipe_sprite.position = Vector2(
+		(fuel_depot_sprite.position.x + shop_center_position.x) * 0.5,
+		ground_top_y - 84.0
+	)
+	mine_tiles.add_child(fuel_depot_pipe_sprite)
 
 
 func get_lander_surface_column() -> int:
@@ -738,7 +821,7 @@ func mine_target_cell(target_cell: Vector2i) -> void:
 	var block_type: BlockType = block_types_by_cell.get(target_cell, BlockType.ROCK)
 	var resource_name := get_resource_name_for_block_type(block_type)
 	
-	if is_inventory_resource(resource_name) and get_inventory_count() >= inventory_capacity:
+	if is_inventory_resource(resource_name) and get_inventory_room() <= 0:
 		update_hud()
 		return
 	
@@ -746,13 +829,34 @@ func mine_target_cell(target_cell: Vector2i) -> void:
 	block_types_by_cell.erase(target_cell)
 	
 	if is_inventory_resource(resource_name):
-		resources[resource_name] = int(resources.get(resource_name, 0)) + 1
+		var yield_amount := get_mined_resource_yield(block_type)
+		var amount_to_add: int = mini(yield_amount, get_inventory_room())
+		resources[resource_name] = int(resources.get(resource_name, 0)) + amount_to_add
+		print("Mined %s: +%d" % [resource_name, amount_to_add])
 	
 	update_hud()
 
 
 func is_inventory_resource(resource_name: String) -> bool:
 	return resource_name != "Dirt" and resource_name != "Rock" and resource_name != "Unknown"
+
+
+func get_mined_resource_yield(block_type: BlockType) -> int:
+	if is_variable_yield_ore_block(block_type):
+		return randi_range(ore_yield_min, ore_yield_max)
+	return 1
+
+
+func is_variable_yield_ore_block(block_type: BlockType) -> bool:
+	return block_type in [
+		BlockType.COPPER,
+		BlockType.IRON,
+		BlockType.GOLD,
+		BlockType.TREASURE,
+		BlockType.DIAMOND,
+		BlockType.WARPGEMS,
+		BlockType.BLACKHOLECRYSTALS,
+	]
 
 
 func get_inventory_count() -> int:
@@ -764,6 +868,10 @@ func get_inventory_count() -> int:
 	return count
 
 
+func get_inventory_room() -> int:
+	return maxi(inventory_capacity - get_inventory_count(), 0)
+
+
 func get_cargo_hold_count() -> int:
 	var count := 0
 	
@@ -771,6 +879,10 @@ func get_cargo_hold_count() -> int:
 		count += int(cargo_hold_resources[resource_name])
 	
 	return count
+
+
+func get_cargo_hold_room() -> int:
+	return maxi(cargo_hold_capacity - get_cargo_hold_count(), 0)
 
 
 func get_total_resource_count(resource_name: String) -> int:
@@ -952,6 +1064,7 @@ func create_shop_ui() -> void:
 	
 	var shop_layer := CanvasLayer.new()
 	shop_layer.name = "ShopUI"
+	shop_layer.layer = SHOP_LAYER_INDEX
 	add_child(shop_layer)
 	
 	shop_panel = Panel.new()
@@ -1086,6 +1199,9 @@ func clear_shop_content() -> void:
 		return
 	
 	lander_cargo_hold_list = null
+	return_to_starship_button = null
+	return_to_starship_status_label = null
+	fuel_processing_status_label = null
 	clear_children(shop_content)
 
 
@@ -1099,7 +1215,18 @@ func show_shop_main_view() -> void:
 	shop_content.add_child(top_row)
 	
 	add_shop_button(top_row, "Upgrades", Callable(self, "show_upgrade_category_view"))
-	refuel_button = add_shop_button(top_row, get_refuel_button_text(), Callable(self, "_on_refuel_pressed"))
+	
+	var fuel_action_column := VBoxContainer.new()
+	fuel_action_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	fuel_action_column.add_theme_constant_override("separation", 8)
+	top_row.add_child(fuel_action_column)
+	
+	refuel_button = add_shop_button(fuel_action_column, get_refuel_button_text(), Callable(self, "_on_refuel_pressed"))
+	return_to_starship_status_label = Label.new()
+	return_to_starship_status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	return_to_starship_status_label.add_theme_font_size_override("font_size", 14)
+	fuel_action_column.add_child(return_to_starship_status_label)
+	return_to_starship_button = add_shop_button(fuel_action_column, "Return to Starship", Callable(self, "_on_return_to_starship_pressed"))
 	add_shop_button(top_row, "Lander", Callable(self, "show_market_view"))
 	
 	var center_box := CenterContainer.new()
@@ -1132,7 +1259,7 @@ func show_upgrade_category_view() -> void:
 	category_box.add_theme_constant_override("separation", 18)
 	shop_content.add_child(category_box)
 	
-	for category_name in ["Miner", "Lander", "Starship", "Global"]:
+	for category_name in ["Miner", "Lander", "Planetary Upgrades", "Starship", "Global"]:
 		var button := add_shop_button(category_box, category_name, Callable(self, "show_upgrade_grid_view").bind(category_name))
 		button.custom_minimum_size = Vector2(380.0, 62.0)
 		button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
@@ -1162,10 +1289,12 @@ func show_upgrade_grid_view(category_name: String) -> void:
 	for definition in category_upgrades:
 		var upgrade_id: String = String(definition["id"])
 		var level: int = int(upgrade_levels.get(upgrade_id, 0))
+		var max_level: int = int(definition.get("max_level", 10))
 		var costs := get_upgrade_costs(definition, level)
-		var button_text := "%s\nLvl %d/10\n%s\n%s" % [
+		var button_text := "%s\nLvl %d/%d\n%s\n%s" % [
 			String(definition["name"]),
 			level,
+			max_level,
 			format_upgrade_effect(definition, level),
 			format_upgrade_costs(costs)
 		]
@@ -1174,7 +1303,7 @@ func show_upgrade_grid_view(category_name: String) -> void:
 		button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		button.add_theme_font_size_override("font_size", 15)
-		button.disabled = level >= 10 or not can_afford_upgrade(costs)
+		button.disabled = level >= max_level or not can_afford_upgrade(costs)
 	
 	add_shop_button(shop_content, "Back to Upgrades", Callable(self, "show_upgrade_category_view"))
 	update_shop_ui()
@@ -1258,7 +1387,14 @@ func show_market_view() -> void:
 	process_offset.custom_minimum_size = Vector2(0.0, 56.0)
 	process_column.add_child(process_offset)
 	
-	add_shop_button(process_column, "Process Raw Fuel", Callable(self, "process_raw_fuel_from_storage"))
+	var process_button := add_shop_button(process_column, "Process Raw Fuel", Callable(self, "process_raw_fuel_from_storage"))
+	process_button.disabled = not can_start_fuel_processing()
+	
+	fuel_processing_status_label = Label.new()
+	fuel_processing_status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	fuel_processing_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	fuel_processing_status_label.add_theme_font_size_override("font_size", 15)
+	process_column.add_child(fuel_processing_status_label)
 	
 	add_shop_button(shop_content, "Back", Callable(self, "show_shop_main_view"))
 	update_shop_ui()
@@ -1284,6 +1420,9 @@ func initialize_upgrade_definitions() -> void:
 			make_upgrade("lander_repair_station", "Repair Station", [{"resource": "Iron", "amount": 2}, {"resource": "Gold", "amount": 1}, {"resource": "Credits", "amount": 10}], "Repair strength improves 10% per level."),
 			make_upgrade("lander_upgrade_station", "Upgrade Station", [{"resource": "Copper", "amount": 2}, {"resource": "Iron", "amount": 2}, {"resource": "Credits", "amount": 10}], "Upgrade station capability improves 10% per level."),
 		],
+		"Planetary Upgrades": [
+			make_upgrade("planetary_fuel_depot", "Fuel Depot", [{"resource": "Copper", "amount": 1}, {"resource": "Iron", "amount": 1}, {"resource": "Raw Fuel", "amount": 1}, {"resource": "Credits", "amount": 10}], "Builds a +20 ton rocket fuel depot next to the lander.", 1),
+		],
 		"Starship": [
 			make_upgrade("starship_fuel_capacity", "Fuel Capacity", [{"resource": "Copper", "amount": 2}, {"resource": "Raw Fuel", "amount": 2}, {"resource": "Credits", "amount": 10}], "Starship fuel capacity increases 10% per level."),
 			make_upgrade("starship_ltl_drive_performance", "LTL Drive Performance", [{"resource": "Copper", "amount": 2}, {"resource": "Iron", "amount": 1}, {"resource": "Credits", "amount": 10}], "LTL drive performance increases 10% per level."),
@@ -1300,12 +1439,13 @@ func initialize_upgrade_definitions() -> void:
 	}
 
 
-func make_upgrade(upgrade_id: String, upgrade_name: String, base_costs: Array, description: String) -> Dictionary:
+func make_upgrade(upgrade_id: String, upgrade_name: String, base_costs: Array, description: String, max_level: int = 10) -> Dictionary:
 	return {
 		"id": upgrade_id,
 		"name": upgrade_name,
 		"base_costs": base_costs,
 		"description": description,
+		"max_level": max_level,
 	}
 
 
@@ -1317,12 +1457,15 @@ func get_upgrade_costs(definition: Dictionary, level: int) -> Array:
 		var amount := base_amount + level
 		if resource_name == "Credits":
 			amount = base_amount * (level + 1)
+		else:
+			amount = (base_amount + level) * upgrade_resource_cost_scale
 		costs.append({"resource": resource_name, "amount": amount})
 	return costs
 
 
 func format_upgrade_effect(definition: Dictionary, level: int) -> String:
-	if level >= 10:
+	var max_level: int = int(definition.get("max_level", 10))
+	if level >= max_level:
 		return "Max level reached"
 	var description := String(definition["description"])
 	description = description.replace(" increases ", " +")
@@ -1368,7 +1511,8 @@ func _on_upgrade_pressed(category_name: String, upgrade_id: String) -> void:
 		return
 	
 	var level: int = int(upgrade_levels.get(upgrade_id, 0))
-	if level >= 10:
+	var max_level: int = int(definition.get("max_level", 10))
+	if level >= max_level:
 		return
 	
 	var costs := get_upgrade_costs(definition, level)
@@ -1414,6 +1558,10 @@ func apply_upgrade_effect(upgrade_id: String, new_level: int) -> void:
 		"lander_fuel_storage_capacity":
 			max_lander_mining_fuel_kg = ceili(float(max_lander_mining_fuel_kg) * 1.1)
 			max_lander_rocket_fuel_tons = ceili(float(max_lander_rocket_fuel_tons) * 1.1)
+		"lander_cargo_capacity":
+			cargo_hold_capacity = ceili(float(cargo_hold_capacity) * 1.1)
+		"planetary_fuel_depot":
+			build_fuel_depot()
 
 
 func get_refuel_button_text() -> String:
@@ -1465,13 +1613,26 @@ func update_shop_ui() -> void:
 			or (lander_mining_fuel_kg <= 0 and credits < emergency_refuel_credit_cost_per_kg)
 		)
 	
+	if return_to_starship_status_label != null:
+		return_to_starship_status_label.text = "Rocket Fuel: %d / %d tons required" % [
+			lander_rocket_fuel_tons,
+			return_to_starship_required_rocket_fuel_tons
+		]
+	
+	if return_to_starship_button != null:
+		return_to_starship_button.disabled = lander_rocket_fuel_tons < return_to_starship_required_rocket_fuel_tons
+	
+	if fuel_processing_status_label != null:
+		fuel_processing_status_label.text = get_fuel_processing_status_text()
+	
 	shop_status_label.text = (
-		"Credits: %d   Cargo: %d / %d   Cargo Hold: %d items\nMining Fuel: %d / %d kg   Rocket Fuel: %d / %d tons   Starship Mining Fuel: %d / %d kg"
+		"Credits: %d   Cargo: %d / %d   Cargo Hold: %d / %d units\nMining Fuel: %d / %d kg   Rocket Fuel: %d / %d tons   Starship Mining Fuel: %d / %d kg"
 		% [
 			credits,
 			get_inventory_count(),
 			inventory_capacity,
 			get_cargo_hold_count(),
+			cargo_hold_capacity,
 			lander_mining_fuel_kg,
 			max_lander_mining_fuel_kg,
 			lander_rocket_fuel_tons,
@@ -1584,47 +1745,93 @@ func deposit_resource(resource_name: String) -> void:
 	if count <= 0:
 		return
 	
-	cargo_hold_resources[resource_name] = int(cargo_hold_resources.get(resource_name, 0)) + count
-	resources[resource_name] = 0
+	var amount_to_deposit: int = mini(count, get_cargo_hold_room())
+	if amount_to_deposit <= 0:
+		refresh_lander_view_or_shop_ui()
+		update_hud()
+		return
+	
+	cargo_hold_resources[resource_name] = int(cargo_hold_resources.get(resource_name, 0)) + amount_to_deposit
+	resources[resource_name] = count - amount_to_deposit
 	refresh_lander_view_or_shop_ui()
 	update_hud()
 
 
 func process_raw_fuel_from_storage() -> void:
-	var raw_fuel_count: int = get_total_resource_count("Raw Fuel")
-	
-	if raw_fuel_count <= 0:
-		return
-	
-	var mining_fuel_room: int = maxi(max_lander_mining_fuel_kg - lander_mining_fuel_kg, 0)
-	var rocket_fuel_room: int = maxi(max_lander_rocket_fuel_tons - lander_rocket_fuel_tons, 0)
-	if mining_fuel_room <= 0 or rocket_fuel_room <= 0:
+	if not can_start_fuel_processing():
 		refresh_lander_view_or_shop_ui()
 		return
 	
-	var raw_fuel_limited_by_mining_tank: int = ceili(float(mining_fuel_room) / float(mining_fuel_kg_per_raw_fuel))
-	var raw_fuel_limited_by_rocket_tank: int = floori(float(rocket_fuel_room) / float(rocket_fuel_tons_per_raw_fuel))
-	var raw_fuel_to_process: int = mini(
-		raw_fuel_count,
-		mini(raw_fuel_limited_by_mining_tank, raw_fuel_limited_by_rocket_tank)
-	)
-	var raw_fuel_to_store: int = raw_fuel_count - raw_fuel_to_process
-	
-	resources["Raw Fuel"] = 0
-	cargo_hold_resources["Raw Fuel"] = 0
-	
-	if raw_fuel_to_process > 0:
-		lander_mining_fuel_kg = mini(
-			max_lander_mining_fuel_kg,
-			lander_mining_fuel_kg + raw_fuel_to_process * mining_fuel_kg_per_raw_fuel
-		)
-		lander_rocket_fuel_tons += raw_fuel_to_process * rocket_fuel_tons_per_raw_fuel
-	
-	if raw_fuel_to_store > 0:
-		cargo_hold_resources["Raw Fuel"] = raw_fuel_to_store
-	
+	consume_resource("Raw Fuel", 1)
+	fuel_processing_active = true
+	fuel_processing_remaining_seconds = fuel_processing_seconds_per_ton
 	refresh_lander_view_or_shop_ui()
 	update_hud()
+	return
+
+
+func can_start_fuel_processing() -> bool:
+	return (
+		not fuel_processing_active
+		and get_total_resource_count("Raw Fuel") > 0
+		and get_rocket_fuel_room() >= rocket_fuel_tons_per_raw_fuel
+	)
+
+
+func get_rocket_fuel_room() -> int:
+	return maxi(max_lander_rocket_fuel_tons - lander_rocket_fuel_tons, 0)
+
+
+func update_fuel_processing(delta: float) -> void:
+	if not fuel_processing_active:
+		return
+	
+	if get_rocket_fuel_room() < rocket_fuel_tons_per_raw_fuel:
+		refresh_lander_view_or_shop_ui()
+		return
+	
+	fuel_processing_remaining_seconds = maxf(fuel_processing_remaining_seconds - delta, 0.0)
+	if fuel_processing_remaining_seconds > 0.0:
+		update_shop_ui()
+		return
+	
+	complete_fuel_processing()
+
+
+func complete_fuel_processing() -> void:
+	fuel_processing_active = false
+	fuel_processing_remaining_seconds = 0.0
+	lander_mining_fuel_kg = mini(
+		max_lander_mining_fuel_kg,
+		lander_mining_fuel_kg + mining_fuel_kg_per_raw_fuel
+	)
+	lander_rocket_fuel_tons = mini(
+		max_lander_rocket_fuel_tons,
+		lander_rocket_fuel_tons + rocket_fuel_tons_per_raw_fuel
+	)
+	refresh_lander_view_or_shop_ui()
+	update_hud()
+
+
+func get_fuel_processing_status_text() -> String:
+	if fuel_processing_active:
+		return "Processing Fuel: %ds remaining" % ceili(fuel_processing_remaining_seconds)
+	
+	if get_rocket_fuel_room() <= 0:
+		return "Rocket fuel storage full"
+	
+	if get_total_resource_count("Raw Fuel") <= 0:
+		return "No raw fuel available"
+	
+	return "Ready: 30s per ton"
+
+
+func _on_return_to_starship_pressed() -> void:
+	if lander_rocket_fuel_tons < return_to_starship_required_rocket_fuel_tons:
+		update_shop_ui()
+		return
+	
+	shop_status_label.text = "Return to Starship ready. Scene transition stub pending."
 
 
 func _on_deposit_all_pressed() -> void:
@@ -1633,8 +1840,12 @@ func _on_deposit_all_pressed() -> void:
 		if count <= 0:
 			continue
 		
-		cargo_hold_resources[resource_name] = int(cargo_hold_resources.get(resource_name, 0)) + count
-		resources[resource_name] = 0
+		var amount_to_deposit: int = mini(count, get_cargo_hold_room())
+		if amount_to_deposit <= 0:
+			break
+		
+		cargo_hold_resources[resource_name] = int(cargo_hold_resources.get(resource_name, 0)) + amount_to_deposit
+		resources[resource_name] = count - amount_to_deposit
 	
 	refresh_lander_view_or_shop_ui()
 	update_hud()
@@ -1854,6 +2065,7 @@ func trigger_game_over() -> void:
 func create_hud() -> void:
 	var hud_layer := CanvasLayer.new()
 	hud_layer.name = "MiningHUD"
+	hud_layer.layer = HUD_LAYER_INDEX
 	add_child(hud_layer)
 	
 	var fuel_bar_label := Label.new()
