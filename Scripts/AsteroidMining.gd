@@ -1,6 +1,7 @@
 extends Node2D
 
 const FogOverlayScript := preload("res://Scripts/FogOverlay.gd")
+const ResourceTileTexture := preload("res://Sprites/TileSets/MiningTilesVariantsDugDirt64.png")
 
 enum BlockType {
 	EMPTY,
@@ -48,10 +49,12 @@ enum BlockType {
 @export var fuel_warning_ratio: float = 0.3
 @export var mining_fuel_seconds_per_kg: float = 1.0
 @export var idle_fuel_seconds_per_kg: float = 10.0
-@export var mining_fuel_kg_per_raw_fuel: int = 50
+@export var mining_fuel_kg_per_raw_fuel: int = 200
 @export var rocket_fuel_tons_per_raw_fuel: int = 1
 @export var max_lander_mining_fuel_kg: int = 200
 @export var max_lander_rocket_fuel_tons: int = 20
+@export var max_starship_mining_fuel_kg: int = 7000
+@export var starting_starship_mining_fuel_kg: int = 1000
 @export var inventory_capacity: int = 10
 @export var shop_lander_texture_path: String = "res://Sprites/Vehicles/RocketLanderEdited.png"
 @export var shop_lander_scale: float = 0.75
@@ -113,7 +116,9 @@ var credits: int = 100
 var fuel_seconds: float = 60.0
 var lander_mining_fuel_kg: int = 0
 var lander_rocket_fuel_tons: int = 0
+var starship_mining_fuel_kg: int = 0
 var hud_label: Label
+var hud_cargo_icons: VBoxContainer
 var fuel_bar: Control
 var fuel_bar_fill: ColorRect
 var fuel_bar_segments: Array[ColorRect] = []
@@ -125,6 +130,7 @@ var shop_panel: Panel
 var shop_status_label: Label
 var shop_content: Control
 var shop_title_label: Label
+var lander_cargo_hold_list: VBoxContainer
 var refuel_button: Button
 var upgrade_levels: Dictionary = {}
 var upgrade_definitions: Dictionary = {}
@@ -151,7 +157,8 @@ func _ready() -> void:
 	pause_menu.quit_requested.connect(_on_quit_pressed)
 	credits = starting_credits
 	fuel_seconds = max_fuel_seconds
-	lander_mining_fuel_kg = get_miner_full_tank_fuel_kg()
+	starship_mining_fuel_kg = mini(starting_starship_mining_fuel_kg, max_starship_mining_fuel_kg)
+	fill_lander_mining_fuel_from_starship()
 	
 	generate_mine_tiles()
 	position_player_in_sky()
@@ -619,8 +626,6 @@ func update_mine_direction() -> void:
 func get_held_mine_direction() -> Vector2i:
 	if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN):
 		return Vector2i.DOWN
-	elif Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP):
-		return Vector2i.UP
 	elif Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT):
 		return Vector2i.LEFT
 	elif Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT):
@@ -763,6 +768,13 @@ func get_total_resource_count(resource_name: String) -> int:
 	return int(resources.get(resource_name, 0)) + int(cargo_hold_resources.get(resource_name, 0))
 
 
+func get_total_sellable_resource_count() -> int:
+	var count := 0
+	for resource_name in get_sellable_resource_names():
+		count += get_total_resource_count(resource_name)
+	return count
+
+
 func consume_resource(resource_name: String, amount: int) -> void:
 	var cargo_hold_count: int = int(cargo_hold_resources.get(resource_name, 0))
 	var from_cargo_hold: int = mini(cargo_hold_count, amount)
@@ -834,8 +846,6 @@ func get_target_mine_cell() -> Vector2i:
 			target_position += Vector2(-half_width - 22.0, 0.0)
 		Vector2i.RIGHT:
 			target_position += Vector2(half_width + 22.0, 0.0)
-		Vector2i.UP:
-			target_position += Vector2(0.0, -half_height - 24.0)
 		_:
 			target_position += Vector2(0.0, half_height + 24.0)
 	
@@ -1017,12 +1027,51 @@ func add_shop_spacer(parent: Control) -> Control:
 	return spacer
 
 
+func clear_children(parent: Node) -> void:
+	for child in parent.get_children():
+		child.queue_free()
+
+
+func create_resource_icon(resource_name: String, icon_size: Vector2 = Vector2(32.0, 32.0)) -> TextureRect:
+	var icon := TextureRect.new()
+	var atlas_texture := AtlasTexture.new()
+	atlas_texture.atlas = ResourceTileTexture
+	atlas_texture.region = Rect2(Vector2(get_resource_icon_tile_coords(resource_name)) * 64.0, Vector2(64.0, 64.0))
+	icon.texture = atlas_texture
+	icon.custom_minimum_size = icon_size
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	return icon
+
+
+func get_resource_icon_tile_coords(resource_name: String) -> Vector2i:
+	match resource_name:
+		"Copper":
+			return copper_tiles[0] if not copper_tiles.is_empty() else Vector2i(4, 1)
+		"Raw Fuel":
+			return rawfuel_tiles[0] if not rawfuel_tiles.is_empty() else Vector2i(0, 1)
+		"Iron":
+			return iron_tiles[0] if not iron_tiles.is_empty() else Vector2i(0, 2)
+		"Gold":
+			return gold_tiles[0] if not gold_tiles.is_empty() else Vector2i(3, 2)
+		"Treasure":
+			return treasure_tiles[0] if not treasure_tiles.is_empty() else Vector2i(7, 1)
+		"Diamond":
+			return diamond_tiles[0] if not diamond_tiles.is_empty() else Vector2i(2, 3)
+		"Warp Gems":
+			return warpgems_tiles[0] if not warpgems_tiles.is_empty() else Vector2i(6, 2)
+		"Black Hole Crystals":
+			return blackholecrystal_tiles[0] if not blackholecrystal_tiles.is_empty() else Vector2i(0, 3)
+		_:
+			return dirt_tiles[0] if not dirt_tiles.is_empty() else Vector2i(0, 0)
+
+
 func clear_shop_content() -> void:
 	if shop_content == null:
 		return
 	
-	for child in shop_content.get_children():
-		child.queue_free()
+	lander_cargo_hold_list = null
+	clear_children(shop_content)
 
 
 func show_shop_main_view() -> void:
@@ -1036,7 +1085,7 @@ func show_shop_main_view() -> void:
 	
 	add_shop_button(top_row, "Upgrades", Callable(self, "show_upgrade_category_view"))
 	refuel_button = add_shop_button(top_row, get_refuel_button_text(), Callable(self, "_on_refuel_pressed"))
-	add_shop_button(top_row, "Market", Callable(self, "show_market_view"))
+	add_shop_button(top_row, "Lander", Callable(self, "show_market_view"))
 	
 	var center_box := CenterContainer.new()
 	center_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1118,7 +1167,7 @@ func show_upgrade_grid_view(category_name: String) -> void:
 
 func show_market_view() -> void:
 	clear_shop_content()
-	shop_title_label.text = "Market"
+	shop_title_label.text = "Lander"
 	
 	var deposit_row := CenterContainer.new()
 	deposit_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1133,6 +1182,25 @@ func show_market_view() -> void:
 	market_columns.add_theme_constant_override("separation", 14)
 	shop_content.add_child(market_columns)
 	
+	var cargo_hold_panel := VBoxContainer.new()
+	cargo_hold_panel.custom_minimum_size = Vector2(220.0, 0.0)
+	cargo_hold_panel.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	cargo_hold_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	cargo_hold_panel.add_theme_constant_override("separation", 8)
+	market_columns.add_child(cargo_hold_panel)
+	
+	var cargo_hold_title := Label.new()
+	cargo_hold_title.text = "Cargo Hold"
+	cargo_hold_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	cargo_hold_title.add_theme_font_size_override("font_size", 18)
+	cargo_hold_panel.add_child(cargo_hold_title)
+	
+	lander_cargo_hold_list = VBoxContainer.new()
+	lander_cargo_hold_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	lander_cargo_hold_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	lander_cargo_hold_list.add_theme_constant_override("separation", 6)
+	cargo_hold_panel.add_child(lander_cargo_hold_list)
+	
 	var sell_column := VBoxContainer.new()
 	sell_column.custom_minimum_size = Vector2(280.0, 0.0)
 	sell_column.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
@@ -1140,28 +1208,25 @@ func show_market_view() -> void:
 	sell_column.add_theme_constant_override("separation", 10)
 	market_columns.add_child(sell_column)
 	
-	add_shop_button(sell_column, "Sell All", Callable(self, "_on_sell_all_pressed"))
-	
-	var sell_buttons := [
-		["Sell Copper", Callable(self, "_on_sell_copper_pressed")],
-		["Sell Raw Fuel", Callable(self, "_on_sell_raw_fuel_pressed")],
-		["Sell Iron", Callable(self, "_on_sell_iron_pressed")],
-		["Sell Gold", Callable(self, "_on_sell_gold_pressed")],
-		["Sell Treasure", Callable(self, "_on_sell_treasure_pressed")],
-		["Sell Diamond", Callable(self, "_on_sell_diamond_pressed")],
-		["Sell Warp Gems", Callable(self, "_on_sell_warp_gems_pressed")],
-		["Sell Black Hole Crystals", Callable(self, "_on_sell_black_hole_crystals_pressed")],
-	]
-	
-	for sell_button_definition in sell_buttons:
-		var button_text: String = String(sell_button_definition[0])
-		var button_callback: Callable = sell_button_definition[1]
-		var button := add_shop_button(
-			sell_column,
-			button_text,
-			button_callback
-		)
-		apply_individual_sell_button_style(button)
+	if get_total_sellable_resource_count() > 0:
+		add_shop_button(sell_column, "Sell All", Callable(self, "_on_sell_all_pressed"))
+		
+		for resource_name in get_sellable_resource_names():
+			if get_total_resource_count(resource_name) <= 0:
+				continue
+			
+			var button := add_shop_button(
+				sell_column,
+				"Sell %s" % resource_name,
+				Callable(self, "sell_resource").bind(resource_name)
+			)
+			apply_individual_sell_button_style(button)
+	else:
+		var empty_sell_label := Label.new()
+		empty_sell_label.text = "No resources to sell"
+		empty_sell_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		empty_sell_label.add_theme_font_size_override("font_size", 16)
+		sell_column.add_child(empty_sell_label)
 	
 	var middle_space := Control.new()
 	middle_space.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1343,6 +1408,17 @@ func get_refuel_button_text() -> String:
 	return "Refuel\n%d Credits" % get_emergency_refuel_credit_cost(needed_kg)
 
 
+func fill_lander_mining_fuel_from_starship() -> void:
+	var lander_fuel_room: int = maxi(max_lander_mining_fuel_kg - lander_mining_fuel_kg, 0)
+	var transfer_kg: int = mini(lander_fuel_room, starship_mining_fuel_kg)
+	
+	if transfer_kg <= 0:
+		return
+	
+	lander_mining_fuel_kg += transfer_kg
+	starship_mining_fuel_kg -= transfer_kg
+
+
 func open_shop() -> void:
 	is_shop_open = true
 	is_paused = true
@@ -1375,7 +1451,7 @@ func update_shop_ui() -> void:
 		)
 	
 	shop_status_label.text = (
-		"Credits: %d   Cargo: %d / %d   Cargo Hold: %d items\nMining Fuel: %d / %d kg   Rocket Fuel: %d / %d tons"
+		"Credits: %d   Cargo: %d / %d   Cargo Hold: %d items\nMining Fuel: %d / %d kg   Rocket Fuel: %d / %d tons   Starship Mining Fuel: %d / %d kg"
 		% [
 			credits,
 			get_inventory_count(),
@@ -1384,9 +1460,53 @@ func update_shop_ui() -> void:
 			lander_mining_fuel_kg,
 			max_lander_mining_fuel_kg,
 			lander_rocket_fuel_tons,
-			max_lander_rocket_fuel_tons
+			max_lander_rocket_fuel_tons,
+			starship_mining_fuel_kg,
+			max_starship_mining_fuel_kg
 		]
 	)
+	update_lander_cargo_hold_list()
+
+
+func refresh_lander_view_or_shop_ui() -> void:
+	if is_shop_open and shop_title_label != null and shop_title_label.text == "Lander":
+		show_market_view()
+	else:
+		update_shop_ui()
+
+
+func update_lander_cargo_hold_list() -> void:
+	if lander_cargo_hold_list == null:
+		return
+	
+	clear_children(lander_cargo_hold_list)
+	
+	var has_resources := false
+	for resource_name in get_sellable_resource_names():
+		var count: int = int(cargo_hold_resources.get(resource_name, 0))
+		if count <= 0:
+			continue
+		
+		has_resources = true
+		var row := HBoxContainer.new()
+		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_theme_constant_override("separation", 8)
+		lander_cargo_hold_list.add_child(row)
+		
+		row.add_child(create_resource_icon(resource_name, Vector2(28.0, 28.0)))
+		
+		var label := Label.new()
+		label.text = "%s x%d" % [resource_name, count]
+		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		label.add_theme_font_size_override("font_size", 15)
+		row.add_child(label)
+	
+	if not has_resources:
+		var empty_label := Label.new()
+		empty_label.text = "Empty"
+		empty_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		empty_label.add_theme_font_size_override("font_size", 15)
+		lander_cargo_hold_list.add_child(empty_label)
 
 
 func get_resource_list_text(source: Dictionary) -> String:
@@ -1439,7 +1559,7 @@ func sell_resource(resource_name: String) -> void:
 	credits += count * get_resource_value(resource_name)
 	resources[resource_name] = 0
 	cargo_hold_resources[resource_name] = 0
-	update_shop_ui()
+	refresh_lander_view_or_shop_ui()
 	update_hud()
 
 
@@ -1451,7 +1571,7 @@ func deposit_resource(resource_name: String) -> void:
 	
 	cargo_hold_resources[resource_name] = int(cargo_hold_resources.get(resource_name, 0)) + count
 	resources[resource_name] = 0
-	update_shop_ui()
+	refresh_lander_view_or_shop_ui()
 	update_hud()
 
 
@@ -1463,7 +1583,11 @@ func process_raw_fuel_from_storage() -> void:
 	
 	var mining_fuel_room: int = maxi(max_lander_mining_fuel_kg - lander_mining_fuel_kg, 0)
 	var rocket_fuel_room: int = maxi(max_lander_rocket_fuel_tons - lander_rocket_fuel_tons, 0)
-	var raw_fuel_limited_by_mining_tank: int = floori(float(mining_fuel_room) / float(mining_fuel_kg_per_raw_fuel))
+	if mining_fuel_room <= 0 or rocket_fuel_room <= 0:
+		refresh_lander_view_or_shop_ui()
+		return
+	
+	var raw_fuel_limited_by_mining_tank: int = ceili(float(mining_fuel_room) / float(mining_fuel_kg_per_raw_fuel))
 	var raw_fuel_limited_by_rocket_tank: int = floori(float(rocket_fuel_room) / float(rocket_fuel_tons_per_raw_fuel))
 	var raw_fuel_to_process: int = mini(
 		raw_fuel_count,
@@ -1475,21 +1599,29 @@ func process_raw_fuel_from_storage() -> void:
 	cargo_hold_resources["Raw Fuel"] = 0
 	
 	if raw_fuel_to_process > 0:
-		lander_mining_fuel_kg += raw_fuel_to_process * mining_fuel_kg_per_raw_fuel
+		lander_mining_fuel_kg = mini(
+			max_lander_mining_fuel_kg,
+			lander_mining_fuel_kg + raw_fuel_to_process * mining_fuel_kg_per_raw_fuel
+		)
 		lander_rocket_fuel_tons += raw_fuel_to_process * rocket_fuel_tons_per_raw_fuel
 	
 	if raw_fuel_to_store > 0:
 		cargo_hold_resources["Raw Fuel"] = raw_fuel_to_store
 	
-	update_shop_ui()
+	refresh_lander_view_or_shop_ui()
 	update_hud()
 
 
 func _on_deposit_all_pressed() -> void:
 	for resource_name in get_sellable_resource_names():
-		deposit_resource(resource_name)
+		var count: int = int(resources.get(resource_name, 0))
+		if count <= 0:
+			continue
+		
+		cargo_hold_resources[resource_name] = int(cargo_hold_resources.get(resource_name, 0)) + count
+		resources[resource_name] = 0
 	
-	update_shop_ui()
+	refresh_lander_view_or_shop_ui()
 	update_hud()
 
 
@@ -1501,7 +1633,7 @@ func _on_sell_all_pressed() -> void:
 			resources[resource_name] = 0
 			cargo_hold_resources[resource_name] = 0
 	
-	update_shop_ui()
+	refresh_lander_view_or_shop_ui()
 	update_hud()
 
 
@@ -1563,10 +1695,6 @@ func _on_refuel_pressed() -> void:
 func get_mining_fuel_kg_needed_for_full_refuel() -> int:
 	var missing_fuel: float = max_fuel_seconds - fuel_seconds
 	return ceili(missing_fuel / mining_fuel_seconds_per_kg)
-
-
-func get_miner_full_tank_fuel_kg() -> int:
-	return ceili(max_fuel_seconds / mining_fuel_seconds_per_kg)
 
 
 func get_emergency_refuel_credit_cost(fuel_kg: int) -> int:
@@ -1750,6 +1878,11 @@ func create_hud() -> void:
 	hud_label.position = Vector2(24, 52)
 	hud_label.add_theme_font_size_override("font_size", 24)
 	hud_layer.add_child(hud_label)
+	
+	hud_cargo_icons = VBoxContainer.new()
+	hud_cargo_icons.position = Vector2(24.0, 122.0)
+	hud_cargo_icons.add_theme_constant_override("separation", 6)
+	hud_layer.add_child(hud_cargo_icons)
 
 
 func rebuild_fuel_bar_segments() -> void:
@@ -1808,23 +1941,37 @@ func update_hud() -> void:
 		return
 	
 	update_fuel_bar()
+	update_hud_cargo_icons()
 	
-	var resource_lines: Array[String] = []
+	hud_label.text = "Credits: %d\nCargo: %d / %d" % [
+		credits,
+		get_inventory_count(),
+		inventory_capacity
+	]
+
+
+func update_hud_cargo_icons() -> void:
+	if hud_cargo_icons == null:
+		return
+	
+	clear_children(hud_cargo_icons)
 	
 	for resource_name in get_sellable_resource_names():
 		var count: int = int(resources.get(resource_name, 0))
-		if count > 0:
-			resource_lines.append("%s: %d" % [resource_name, count])
-	
-	if resource_lines.is_empty():
-		resource_lines.append("No ore in cargo")
-	
-	hud_label.text = "Credits: %d\nCargo: %d / %d\n\n%s" % [
-		credits,
-		get_inventory_count(),
-		inventory_capacity,
-		"\n".join(resource_lines)
-	]
+		if count <= 0:
+			continue
+		
+		var item := HBoxContainer.new()
+		item.add_theme_constant_override("separation", 4)
+		hud_cargo_icons.add_child(item)
+		
+		item.add_child(create_resource_icon(resource_name, Vector2(30.0, 30.0)))
+		
+		var count_label := Label.new()
+		count_label.text = "x%d" % count
+		count_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		count_label.add_theme_font_size_override("font_size", 16)
+		item.add_child(count_label)
 
 
 func _draw() -> void:
@@ -1863,4 +2010,3 @@ func _on_resume_pressed() -> void:
 
 func _on_quit_pressed() -> void:
 	get_tree().quit()
-
