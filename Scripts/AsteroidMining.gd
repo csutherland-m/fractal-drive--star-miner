@@ -99,6 +99,7 @@ enum BlockType {
 @export var diamond_hardness: float = 2.8
 @export var warpgems_hardness: float = 3.5
 @export var blackholecrystals_hardness: float = 3.5
+@export var depth_hardness_increase_per_row: float = 0.01
 
 var is_paused: bool = false
 var is_shop_open: bool = false
@@ -707,7 +708,7 @@ func start_mining_cell(target_cell: Vector2i) -> void:
 	active_mining_damage = 0.0
 	active_mining_elapsed = 0.0
 	var block_type: BlockType = block_types_by_cell.get(target_cell, BlockType.ROCK)
-	active_block_hardness = get_hardness_for_block_type(block_type)
+	active_block_hardness = get_depth_scaled_hardness(block_type, target_cell.y)
 	update_hud()
 
 
@@ -834,6 +835,12 @@ func get_hardness_for_block_type(block_type: BlockType) -> float:
 			return blackholecrystals_hardness
 		_:
 			return rock_hardness
+
+
+func get_depth_scaled_hardness(block_type: BlockType, row: int) -> float:
+	var depth_rows: int = maxi(row - get_first_ground_row(), 0)
+	var depth_multiplier: float = 1.0 + float(depth_rows) * depth_hardness_increase_per_row
+	return get_hardness_for_block_type(block_type) * depth_multiplier
 
 
 func get_target_mine_cell() -> Vector2i:
