@@ -8,7 +8,12 @@ const FuelStationTexture := preload("res://Sprites/UI/fuel_station_placeholder.p
 const FuelPipeTexture := preload("res://Sprites/UI/fuel_pipe_placeholder.png")
 const FuelPipeHorizontalTexture := preload("res://Sprites/UI/fuel_pipe_horizontal_placeholder.png")
 const FuelPipeVerticalTexture := preload("res://Sprites/UI/fuel_pipe_vertical_placeholder.png")
-const GAUGE_CLUSTER_SIZE := Vector2(560.0, 320.0)
+const GAUGE_CLUSTER_DESIGN_SIZE := Vector2(560.0, 320.0)
+const GAUGE_CLUSTER_SCALE := Vector2(0.63, 0.56)
+const GAUGE_CLUSTER_SIZE := Vector2(
+	GAUGE_CLUSTER_DESIGN_SIZE.x * GAUGE_CLUSTER_SCALE.x,
+	GAUGE_CLUSTER_DESIGN_SIZE.y * GAUGE_CLUSTER_SCALE.y
+)
 const HUD_LAYER_INDEX := 5
 const SHOP_LAYER_INDEX := 10
 const TERRAIN_FOREGROUND_Z_INDEX := 8
@@ -18,6 +23,7 @@ enum BlockType {
 	EMPTY,
 	DIRT,
 	ROCK,
+	LODESTONE,
 	COPPER,
 	RAWFUEL,
 	IRON,
@@ -26,6 +32,7 @@ enum BlockType {
 	DIAMOND,
 	WARPGEMS,
 	BLACKHOLECRYSTALS,
+	PLANETCORE,
 }
 
 @onready var mine_tiles: TileMapLayer = $MineTiles
@@ -56,6 +63,19 @@ enum BlockType {
 @export var depth_distribution_full_row: int = 240
 @export var side_fog_padding_pixels: float = 300.0
 @export var depth_meters_per_row: int = 10
+@export var dirt_chocolate_gradient_depth_meters: int = 1000
+@export var dirt_red_gradient_depth_meters: int = 3000
+@export var dirt_depth_tint_alpha: float = 0.38
+@export var planet_core_test_depth_meters: int = 1000
+@export var planet_core_future_depth_meters: int = 5000
+@export var lodestone_start_depth_meters: int = 500
+@export var lodestone_base_chance: float = 0.01
+@export var lodestone_chance_per_500m: float = 0.01
+@export var lodestone_max_chance: float = 0.25
+@export var dirt_void_start_depth_rows: int = 2
+@export var dirt_void_chance: float = 0.02
+@export var dirt_void_min_size: int = 1
+@export var dirt_void_max_size: int = 4
 @export var reveal_radius_tiles: int = 1
 @export var surface_revealed_ground_rows: int = 2
 @export var max_fuel_seconds: float = 60.0
@@ -127,12 +147,15 @@ var is_shop_reentry_locked: bool = false
 var is_game_over: bool = false
 var is_arrival_countdown_active: bool = false
 var is_on_ground: bool = false
+var is_god_mode_active: bool = false
 var player_velocity: Vector2 = Vector2.ZERO
 var last_mine_direction: Vector2i = Vector2i.DOWN
 var player_animation_time: float = 0.0
 var block_types_by_cell: Dictionary = {}
+var planned_void_cells: Dictionary = {}
 var resources: Dictionary = {}
 var cargo_hold_resources: Dictionary = {}
+var planet_core_cell: Vector2i = Vector2i(-1, -1)
 var credits: int = 100
 var fuel_seconds: float = 60.0
 var lander_mining_fuel_kg: int = 0
@@ -175,6 +198,7 @@ var game_over_label: Label
 var countdown_label: Label
 var mining_camera: Camera2D
 var fog_overlay: Node2D
+var dirt_depth_tint_overlay: Node2D
 var mining_blink_overlay: Polygon2D
 var mining_progress_overlay: Polygon2D
 var revealed_cells: Dictionary = {}
@@ -182,6 +206,8 @@ var active_mining_cell: Vector2i = Vector2i(-9999, -9999)
 var active_mining_damage: float = 0.0
 var active_mining_elapsed: float = 0.0
 var active_block_hardness: float = 0.0
+var lodestone_fall_speed: float = 0.0
+var lodestone_fall_distance: float = 0.0
 var has_copper_drill_upgrade: bool = false
 var has_sensor_upgrade: bool = false
 var generated_row_count: int = 0
@@ -200,6 +226,7 @@ func _ready() -> void:
 	generate_mine_tiles()
 	position_player_in_sky()
 	create_surface_shop()
+	create_dirt_depth_tint_overlay()
 	create_mining_camera()
 	create_fog_overlay()
 	create_mining_overlays()
@@ -239,12 +266,15 @@ func _physics_process(delta: float) -> void:
 	update_fuel_bar(delta)
 	check_shop_collision()
 	ensure_world_generated_near_player()
+	update_lodestone_gravity(delta)
 	update_camera()
 	update_mine_direction()
 	try_mine_with_movement_input(delta)
 	update_player_visual(delta)
 	update_revealed_cells()
 	update_mining_overlays()
+	if dirt_depth_tint_overlay != null:
+		dirt_depth_tint_overlay.queue_redraw()
 	queue_redraw()
 
 
@@ -253,7 +283,9 @@ func generate_mine_tiles() -> void:
 	background_tiles.clear()
 	visual_mine_tiles.clear()
 	block_types_by_cell.clear()
+	planned_void_cells.clear()
 	revealed_cells.clear()
+	planet_core_cell = Vector2i(-1, -1)
 	generated_row_count = 0
 	randomize()
 	
@@ -278,6 +310,12 @@ func generate_rows_until(target_row_count: int) -> void:
 			)
 			
 			var block_type := choose_block_type_for_depth(y)
+			if should_place_planet_core_at_cell(cell_position):
+				block_type = BlockType.PLANETCORE
+			elif block_type == BlockType.ROCK and should_convert_rock_to_lodestone(y):
+				block_type = BlockType.LODESTONE
+			elif block_type == BlockType.DIRT and should_make_dirt_cell_void(cell_position):
+				block_type = BlockType.EMPTY
 			var tile_coords := get_tile_coords_for_block_type(block_type)
 			
 			if block_type != BlockType.EMPTY:
@@ -289,6 +327,122 @@ func generate_rows_until(target_row_count: int) -> void:
 				block_types_by_cell[cell_position] = block_type
 	
 	generated_row_count = target_row_count
+	if dirt_depth_tint_overlay != null:
+		dirt_depth_tint_overlay.queue_redraw()
+
+
+func should_place_planet_core_at_cell(cell_position: Vector2i) -> bool:
+	if planet_core_cell == Vector2i(-1, -1):
+		var core_row := get_planet_core_test_row()
+		if cell_position.y == core_row:
+			planet_core_cell = Vector2i(randi_range(0, grid_width - 1), core_row)
+	
+	return cell_position == planet_core_cell
+
+
+func get_planet_core_test_row() -> int:
+	return get_first_ground_row() + floori(float(planet_core_test_depth_meters) / float(depth_meters_per_row))
+
+
+func get_planet_core_future_row() -> int:
+	return get_first_ground_row() + floori(float(planet_core_future_depth_meters) / float(depth_meters_per_row))
+
+
+func should_convert_rock_to_lodestone(row: int) -> bool:
+	var depth_meters: int = maxi(row - get_first_ground_row(), 0) * depth_meters_per_row
+	if depth_meters < lodestone_start_depth_meters:
+		return false
+	
+	return randf() < get_lodestone_chance_for_depth(depth_meters)
+
+
+func get_lodestone_chance_for_depth(depth_meters: int) -> float:
+	var depth_steps_after_start: float = floorf(
+		float(depth_meters - lodestone_start_depth_meters) / 500.0
+	)
+	return clampf(
+		lodestone_base_chance + depth_steps_after_start * lodestone_chance_per_500m,
+		0.0,
+		lodestone_max_chance
+	)
+
+
+func should_make_dirt_cell_void(cell_position: Vector2i) -> bool:
+	if planned_void_cells.has(cell_position):
+		return true
+	
+	if cell_position.y < get_first_ground_row() + dirt_void_start_depth_rows:
+		return false
+	
+	if randf() >= dirt_void_chance:
+		return false
+	
+	create_dirt_void_from_cell(cell_position)
+	return true
+
+
+func create_dirt_void_from_cell(start_cell: Vector2i) -> void:
+	var target_size := randi_range(
+		maxi(dirt_void_min_size, 1),
+		maxi(dirt_void_max_size, dirt_void_min_size)
+	)
+	var void_cells: Array[Vector2i] = [start_cell]
+	var frontier: Array[Vector2i] = [start_cell]
+	planned_void_cells[start_cell] = true
+	
+	while void_cells.size() < target_size and not frontier.is_empty():
+		var source_cell: Vector2i = frontier.pick_random()
+		var neighbor_options := get_shuffled_void_neighbor_cells(source_cell)
+		var expanded := false
+		
+		for neighbor_cell in neighbor_options:
+			if not can_add_cell_to_dirt_void(neighbor_cell):
+				continue
+			
+			planned_void_cells[neighbor_cell] = true
+			void_cells.append(neighbor_cell)
+			frontier.append(neighbor_cell)
+			carve_existing_dirt_void_cell(neighbor_cell)
+			expanded = true
+			break
+		
+		if not expanded:
+			frontier.erase(source_cell)
+
+
+func get_shuffled_void_neighbor_cells(cell: Vector2i) -> Array[Vector2i]:
+	var neighbors: Array[Vector2i] = [
+		cell + Vector2i.RIGHT,
+		cell + Vector2i.DOWN,
+		cell + Vector2i.LEFT,
+		cell + Vector2i.UP,
+	]
+	neighbors.shuffle()
+	return neighbors
+
+
+func can_add_cell_to_dirt_void(cell: Vector2i) -> bool:
+	if planned_void_cells.has(cell):
+		return false
+	
+	if cell.x < 0 or cell.x >= grid_width:
+		return false
+	
+	if cell.y < get_first_ground_row() + dirt_void_start_depth_rows:
+		return false
+	
+	if cell.y >= generated_row_count:
+		return true
+	
+	return block_types_by_cell.get(cell, BlockType.EMPTY) == BlockType.DIRT
+
+
+func carve_existing_dirt_void_cell(cell: Vector2i) -> void:
+	if block_types_by_cell.get(cell, BlockType.EMPTY) != BlockType.DIRT:
+		return
+	
+	block_types_by_cell.erase(cell)
+	visual_mine_tiles.erase_cell(cell)
 
 
 func choose_block_type_for_depth(y: int) -> BlockType:
@@ -348,6 +502,8 @@ func get_tile_coords_for_block_type(block_type: BlockType) -> Vector2i:
 			return pick_tile_coords(dirt_tiles, Vector2i(0, 0))
 		BlockType.ROCK:
 			return pick_tile_coords(rock_tiles, Vector2i(4, 0))
+		BlockType.LODESTONE:
+			return pick_tile_coords(rock_tiles, Vector2i(4, 0))
 		BlockType.COPPER:
 			return pick_tile_coords(copper_tiles, Vector2i(4, 1))
 		BlockType.RAWFUEL:
@@ -363,6 +519,8 @@ func get_tile_coords_for_block_type(block_type: BlockType) -> Vector2i:
 		BlockType.WARPGEMS:
 			return pick_tile_coords(warpgems_tiles, Vector2i(6, 2))
 		BlockType.BLACKHOLECRYSTALS:
+			return pick_tile_coords(blackholecrystal_tiles, Vector2i(0, 3))
+		BlockType.PLANETCORE:
 			return pick_tile_coords(blackholecrystal_tiles, Vector2i(0, 3))
 		_:
 			return pick_tile_coords(dirt_tiles, Vector2i(0, 0))
@@ -423,6 +581,60 @@ func create_surface_shop() -> void:
 	shop_button.texture = shop_texture
 	shop_button.scale = Vector2(shop_lander_scale, shop_lander_scale)
 	mine_tiles.add_child(shop_button)
+
+
+func create_dirt_depth_tint_overlay() -> void:
+	dirt_depth_tint_overlay = Node2D.new()
+	dirt_depth_tint_overlay.name = "DirtDepthTintOverlay"
+	dirt_depth_tint_overlay.z_index = 0
+	dirt_depth_tint_overlay.draw.connect(_on_dirt_depth_tint_overlay_draw)
+	add_child(dirt_depth_tint_overlay)
+
+
+func _on_dirt_depth_tint_overlay_draw() -> void:
+	if dirt_depth_tint_overlay == null:
+		return
+	
+	var tile_size := Vector2(64.0, 64.0)
+	for y in range(get_first_ground_row(), generated_row_count):
+		var tint_color := get_dirt_depth_tint_for_row(y)
+		for x in grid_width:
+			var cell_position := Vector2i(x, y)
+			var block_type: BlockType = block_types_by_cell.get(cell_position, BlockType.DIRT)
+			if block_type != BlockType.DIRT and block_type != BlockType.EMPTY:
+				continue
+			
+			var tile_center := background_tiles.map_to_local(cell_position)
+			dirt_depth_tint_overlay.draw_rect(
+				Rect2(tile_center - tile_size * 0.5, tile_size),
+				tint_color,
+				true
+			)
+
+
+func get_dirt_depth_tint_for_row(row: int) -> Color:
+	var depth_meters: int = maxi(row - get_first_ground_row(), 0) * depth_meters_per_row
+	var tint_alpha: float = clampf(dirt_depth_tint_alpha, 0.0, 1.0)
+	
+	if depth_meters < dirt_chocolate_gradient_depth_meters:
+		var chocolate_ratio: float = clampf(
+			float(depth_meters) / maxf(float(dirt_chocolate_gradient_depth_meters), 1.0),
+			0.0,
+			1.0
+		)
+		return color_with_alpha(Color("#4A2412").lerp(Color("#1F0D07"), chocolate_ratio), tint_alpha)
+	
+	var red_ratio: float = clampf(
+		float(depth_meters - dirt_chocolate_gradient_depth_meters)
+		/ maxf(float(dirt_red_gradient_depth_meters - dirt_chocolate_gradient_depth_meters), 1.0),
+		0.0,
+		1.0
+	)
+	return color_with_alpha(Color("#D83C1E").lerp(Color("#3A0805"), red_ratio), tint_alpha)
+
+
+func color_with_alpha(color: Color, alpha: float) -> Color:
+	return Color(color.r, color.g, color.b, alpha)
 
 
 func build_fuel_depot() -> void:
@@ -505,6 +717,11 @@ func get_player_rect(test_position: Vector2) -> Rect2:
 
 
 func drain_fuel_for_movement(delta: float) -> void:
+	if is_god_mode_active:
+		fuel_seconds = max_fuel_seconds
+		update_hud()
+		return
+	
 	var fuel_drain_rate := fuel_consumption_multiplier
 	
 	if not is_movement_input_pressed():
@@ -782,6 +999,11 @@ func try_mine_with_movement_input(delta: float) -> void:
 		reset_mining_progress()
 		return
 	
+	var block_type: BlockType = block_types_by_cell.get(target_cell, BlockType.ROCK)
+	if block_type == BlockType.LODESTONE:
+		reset_mining_progress()
+		return
+	
 	if target_cell != active_mining_cell:
 		start_mining_cell(target_cell)
 	
@@ -834,11 +1056,93 @@ func mine_target_cell(target_cell: Vector2i) -> void:
 		resources[resource_name] = int(resources.get(resource_name, 0)) + amount_to_add
 		print("Mined %s: +%d" % [resource_name, amount_to_add])
 	
+	if dirt_depth_tint_overlay != null:
+		dirt_depth_tint_overlay.queue_redraw()
 	update_hud()
 
 
+func update_lodestone_gravity(delta: float) -> void:
+	if not has_falling_lodestones():
+		lodestone_fall_speed = 0.0
+		lodestone_fall_distance = 0.0
+		return
+	
+	lodestone_fall_speed = minf(lodestone_fall_speed + gravity * delta, max_fall_speed)
+	lodestone_fall_distance += lodestone_fall_speed * delta
+	
+	var tile_height := 64.0
+	while lodestone_fall_distance >= tile_height:
+		if not step_lodestones_down():
+			lodestone_fall_speed = 0.0
+			lodestone_fall_distance = 0.0
+			return
+		
+		lodestone_fall_distance -= tile_height
+
+
+func has_falling_lodestones() -> bool:
+	for cell in block_types_by_cell.keys():
+		var cell_position: Vector2i = cell
+		if block_types_by_cell[cell_position] != BlockType.LODESTONE:
+			continue
+		
+		if can_lodestone_fall_to(cell_position + Vector2i.DOWN):
+			return true
+	
+	return false
+
+
+func step_lodestones_down() -> bool:
+	var lodestone_cells: Array[Vector2i] = []
+	
+	for cell in block_types_by_cell.keys():
+		var cell_position: Vector2i = cell
+		if block_types_by_cell[cell_position] == BlockType.LODESTONE:
+			lodestone_cells.append(cell_position)
+	
+	lodestone_cells.sort_custom(Callable(self, "sort_cells_bottom_first"))
+	var moved_any := false
+	
+	for cell in lodestone_cells:
+		if block_types_by_cell.get(cell, BlockType.EMPTY) != BlockType.LODESTONE:
+			continue
+		
+		var target_cell := cell + Vector2i.DOWN
+		if not can_lodestone_fall_to(target_cell):
+			continue
+		
+		move_lodestone_block(cell, target_cell)
+		moved_any = true
+	
+	if moved_any and dirt_depth_tint_overlay != null:
+		dirt_depth_tint_overlay.queue_redraw()
+	
+	return moved_any
+
+
+func sort_cells_bottom_first(a: Vector2i, b: Vector2i) -> bool:
+	if a.y == b.y:
+		return a.x < b.x
+	return a.y > b.y
+
+
+func can_lodestone_fall_to(cell: Vector2i) -> bool:
+	return cell.y >= get_first_ground_row() and cell.y < generated_row_count and not block_types_by_cell.has(cell)
+
+
+func move_lodestone_block(from_cell: Vector2i, to_cell: Vector2i) -> void:
+	block_types_by_cell.erase(from_cell)
+	block_types_by_cell[to_cell] = BlockType.LODESTONE
+	visual_mine_tiles.erase_cell(from_cell)
+	visual_mine_tiles.set_cell(
+		to_cell,
+		tile_source_id,
+		get_tile_coords_for_block_type(BlockType.LODESTONE)
+	)
+
+
 func is_inventory_resource(resource_name: String) -> bool:
-	return resource_name != "Dirt" and resource_name != "Rock" and resource_name != "Unknown"
+	return resource_name != "Dirt" and resource_name != "Rock" and resource_name != "Lode Stone" and resource_name != "Unknown"
 
 
 func get_mined_resource_yield(block_type: BlockType) -> int:
@@ -927,6 +1231,8 @@ func get_resource_value(resource_name: String) -> int:
 			return 30
 		"Black Hole Crystals":
 			return 45
+		"Planet Core":
+			return 0
 		_:
 			return 0
 
@@ -935,6 +1241,8 @@ func get_hardness_for_block_type(block_type: BlockType) -> float:
 	match block_type:
 		BlockType.DIRT:
 			return dirt_hardness
+		BlockType.LODESTONE:
+			return rock_hardness
 		BlockType.COPPER:
 			return copper_hardness
 		BlockType.RAWFUEL:
@@ -952,6 +1260,8 @@ func get_hardness_for_block_type(block_type: BlockType) -> float:
 		BlockType.WARPGEMS:
 			return warpgems_hardness
 		BlockType.BLACKHOLECRYSTALS:
+			return blackholecrystals_hardness
+		BlockType.PLANETCORE:
 			return blackholecrystals_hardness
 		_:
 			return rock_hardness
@@ -985,6 +1295,8 @@ func get_resource_name_for_block_type(block_type: BlockType) -> String:
 			return "Dirt"
 		BlockType.ROCK:
 			return "Rock"
+		BlockType.LODESTONE:
+			return "Lode Stone"
 		BlockType.COPPER:
 			return "Copper"
 		BlockType.RAWFUEL:
@@ -1001,6 +1313,8 @@ func get_resource_name_for_block_type(block_type: BlockType) -> String:
 			return "Warp Gems"
 		BlockType.BLACKHOLECRYSTALS:
 			return "Black Hole Crystals"
+		BlockType.PLANETCORE:
+			return "Planet Core"
 		_:
 			return "Unknown"
 
@@ -1190,6 +1504,8 @@ func get_resource_icon_tile_coords(resource_name: String) -> Vector2i:
 			return warpgems_tiles[0] if not warpgems_tiles.is_empty() else Vector2i(6, 2)
 		"Black Hole Crystals":
 			return blackholecrystal_tiles[0] if not blackholecrystal_tiles.is_empty() else Vector2i(0, 3)
+		"Planet Core":
+			return blackholecrystal_tiles[0] if not blackholecrystal_tiles.is_empty() else Vector2i(0, 3)
 		_:
 			return dirt_tiles[0] if not dirt_tiles.is_empty() else Vector2i(0, 0)
 
@@ -1243,6 +1559,10 @@ func show_shop_main_view() -> void:
 	summary.add_theme_font_size_override("font_size", 22)
 	summary.text = "Choose a station."
 	center_box.add_child(summary)
+	
+	var god_mode_button := add_shop_button(shop_content, "God Mode: Max Upgrades", Callable(self, "_on_god_mode_pressed"))
+	god_mode_button.custom_minimum_size = Vector2(360.0, 48.0)
+	god_mode_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	
 	add_shop_button(shop_content, "Leave Shop", Callable(self, "close_shop"))
 	update_shop_ui()
@@ -1528,6 +1848,30 @@ func _on_upgrade_pressed(category_name: String, upgrade_id: String) -> void:
 	update_hud()
 
 
+func _on_god_mode_pressed() -> void:
+	is_god_mode_active = true
+	
+	for category_name in upgrade_definitions.keys():
+		var category_upgrades: Array = upgrade_definitions[category_name]
+		for definition in category_upgrades:
+			var upgrade_id: String = String(definition["id"])
+			var max_level: int = int(definition.get("max_level", 10))
+			var current_level: int = int(upgrade_levels.get(upgrade_id, 0))
+			
+			while current_level < max_level:
+				current_level += 1
+				upgrade_levels[upgrade_id] = current_level
+				apply_upgrade_effect(upgrade_id, current_level)
+	
+	credits = maxi(credits, starting_credits)
+	fuel_seconds = max_fuel_seconds
+	lander_mining_fuel_kg = max_lander_mining_fuel_kg
+	lander_rocket_fuel_tons = max_lander_rocket_fuel_tons
+	update_revealed_cells()
+	update_shop_ui()
+	update_hud()
+
+
 func get_upgrade_definition(category_name: String, upgrade_id: String) -> Dictionary:
 	var category_upgrades: Array = upgrade_definitions.get(category_name, [])
 	for definition in category_upgrades:
@@ -1614,13 +1958,14 @@ func update_shop_ui() -> void:
 		)
 	
 	if return_to_starship_status_label != null:
-		return_to_starship_status_label.text = "Rocket Fuel: %d / %d tons required" % [
+		return_to_starship_status_label.text = "Rocket Fuel: %d / %d tons required\nPlanet Core: %s" % [
 			lander_rocket_fuel_tons,
-			return_to_starship_required_rocket_fuel_tons
+			return_to_starship_required_rocket_fuel_tons,
+			"secured" if has_planet_core() else "required"
 		]
 	
 	if return_to_starship_button != null:
-		return_to_starship_button.disabled = lander_rocket_fuel_tons < return_to_starship_required_rocket_fuel_tons
+		return_to_starship_button.disabled = not can_return_to_starship()
 	
 	if fuel_processing_status_label != null:
 		fuel_processing_status_label.text = get_fuel_processing_status_text()
@@ -1723,6 +2068,7 @@ func get_sellable_resource_names() -> Array[String]:
 		"Diamond",
 		"Warp Gems",
 		"Black Hole Crystals",
+		"Planet Core",
 	]
 
 
@@ -1827,11 +2173,19 @@ func get_fuel_processing_status_text() -> String:
 
 
 func _on_return_to_starship_pressed() -> void:
-	if lander_rocket_fuel_tons < return_to_starship_required_rocket_fuel_tons:
+	if not can_return_to_starship():
 		update_shop_ui()
 		return
 	
-	shop_status_label.text = "Return to Starship ready. Scene transition stub pending."
+	trigger_victory()
+
+
+func can_return_to_starship() -> bool:
+	return lander_rocket_fuel_tons >= return_to_starship_required_rocket_fuel_tons and has_planet_core()
+
+
+func has_planet_core() -> bool:
+	return get_total_resource_count("Planet Core") > 0
 
 
 func _on_deposit_all_pressed() -> void:
@@ -2062,6 +2416,31 @@ func trigger_game_over() -> void:
 	get_tree().change_scene_to_file("res://Scenes/main_game_menu.tscn")
 
 
+func trigger_victory() -> void:
+	if is_game_over:
+		return
+	
+	is_game_over = true
+	is_arrival_countdown_active = false
+	is_shop_open = false
+	is_paused = true
+	player_velocity = Vector2.ZERO
+	reset_mining_progress()
+	
+	if shop_panel != null:
+		shop_panel.visible = false
+	
+	if countdown_label != null:
+		countdown_label.visible = false
+	
+	if game_over_label != null:
+		game_over_label.text = "You win!\nPlanet Core secured. Rocket fuel loaded.\nReturning to the starship..."
+		game_over_label.visible = true
+	
+	await get_tree().create_timer(3.0).timeout
+	get_tree().change_scene_to_file("res://Scenes/main_game_menu.tscn")
+
+
 func create_hud() -> void:
 	var hud_layer := CanvasLayer.new()
 	hud_layer.name = "MiningHUD"
@@ -2117,16 +2496,17 @@ func create_hud() -> void:
 func create_gauge_cluster(hud_layer: CanvasLayer) -> void:
 	gauge_cluster = Control.new()
 	gauge_cluster.name = "GaugeCluster"
-	gauge_cluster.anchor_left = 0.5
-	gauge_cluster.anchor_right = 0.5
+	gauge_cluster.anchor_left = 0.0
+	gauge_cluster.anchor_right = 0.0
 	gauge_cluster.anchor_top = 1.0
 	gauge_cluster.anchor_bottom = 1.0
-	gauge_cluster.offset_left = -GAUGE_CLUSTER_SIZE.x * 0.5
-	gauge_cluster.offset_right = GAUGE_CLUSTER_SIZE.x * 0.5
-	gauge_cluster.offset_top = -GAUGE_CLUSTER_SIZE.y - 14.0
-	gauge_cluster.offset_bottom = -14.0
-	gauge_cluster.size = GAUGE_CLUSTER_SIZE
-	gauge_cluster.custom_minimum_size = GAUGE_CLUSTER_SIZE
+	gauge_cluster.offset_left = 0.0
+	gauge_cluster.offset_right = gauge_cluster.offset_left + GAUGE_CLUSTER_DESIGN_SIZE.x
+	gauge_cluster.offset_top = -GAUGE_CLUSTER_SIZE.y
+	gauge_cluster.offset_bottom = gauge_cluster.offset_top + GAUGE_CLUSTER_DESIGN_SIZE.y
+	gauge_cluster.size = GAUGE_CLUSTER_DESIGN_SIZE
+	gauge_cluster.custom_minimum_size = GAUGE_CLUSTER_DESIGN_SIZE
+	gauge_cluster.scale = GAUGE_CLUSTER_SCALE
 	gauge_cluster.clip_contents = true
 	gauge_cluster.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud_layer.add_child(gauge_cluster)
@@ -2145,7 +2525,7 @@ func create_gauge_cluster(hud_layer: CanvasLayer) -> void:
 	gauge_background.stretch_mode = TextureRect.STRETCH_SCALE
 	gauge_background.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	gauge_cluster.add_child(gauge_background)
-	gauge_background.size = GAUGE_CLUSTER_SIZE
+	gauge_background.size = GAUGE_CLUSTER_DESIGN_SIZE
 	
 	gauge_fuel_needle = create_gauge_needle(Color(0.0, 0.9, 1.0, 0.92), Vector2(96.0, 166.0))
 	gauge_cluster.add_child(gauge_fuel_needle)

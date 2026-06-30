@@ -25,8 +25,8 @@ func _draw() -> void:
 	var left_world_edge: float = first_tile_center.x - tile_size.x * 0.5
 	var right_world_edge: float = last_tile_center.x + tile_size.x * 0.5
 	var side_padding: float = mining_scene.side_fog_padding_pixels
-	var first_row: int = maxi(0, min_cell.y)
-	var last_row: int = max_cell.y
+	var first_row: int = maxi(mining_scene.get_first_ground_row(), min_cell.y)
+	var last_row: int = mini(max_cell.y, mining_scene.generated_row_count - 1)
 	var first_column: int = maxi(0, min_cell.x)
 	var last_column: int = mini(mining_scene.grid_width - 1, max_cell.x)
 	
@@ -50,9 +50,6 @@ func _draw() -> void:
 	for y in range(first_row, last_row + 1):
 		for x in range(first_column, last_column + 1):
 			var cell := Vector2i(x, y)
-			
-			if not mining_scene.block_types_by_cell.has(cell):
-				continue
 			
 			if mining_scene.is_cell_revealed(cell):
 				continue

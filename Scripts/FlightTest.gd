@@ -21,6 +21,8 @@ extends Node2D
 @export var orbit_duration: float = 1.85
 @export var cutscene_rotation_blend: float = 0.08
 @export var lander_launch_scale: float = 0.18
+@export var solar_system_scroll_multiplier: float = 0.35
+@export var zoomed_out_ship_scale: float = 0.22
 
 var ship_velocity: Vector2 = Vector2.ZERO
 var is_paused: bool = false
@@ -34,6 +36,9 @@ var is_landing_sequence_active: bool = false
 var cutscene_asteroid_position: Vector2 = Vector2.ZERO
 var cutscene_orbit_radius: float = 0.0
 var cutscene_orbit_start: Vector2 = Vector2.ZERO
+var solar_system_layer: Node2D
+var solar_system_scroll_offset: Vector2 = Vector2.ZERO
+var asteroid_belt_points: Array[Vector2] = []
 
 func _ready() -> void:
 	pause_menu.resume_requested.connect(_on_resume_pressed)
@@ -41,6 +46,8 @@ func _ready() -> void:
 	starship_side_texture = load(starship_side_texture_path) as Texture2D
 	lander_texture = load(lander_texture_path) as Texture2D
 	ship_sprite.texture = starship_side_texture
+	player_ship.scale = Vector2(zoomed_out_ship_scale, zoomed_out_ship_scale)
+	create_solar_system_layer()
 	create_engine_flame()
 	update_ship_visual(Vector2.RIGHT, 1.0)
 
@@ -66,8 +73,81 @@ func _process(delta: float) -> void:
 		update_ship_visual(ship_velocity.normalized(), delta)
 	
 	update_engine_flame(input_direction != Vector2.ZERO or strafe_input != 0.0, delta)
+	update_solar_system_layer(delta)
 	starfield.star_drift_speed = -ship_velocity
 	asteroid_spawner.space_scroll_speed = -ship_velocity
+
+
+func create_solar_system_layer() -> void:
+	solar_system_layer = Node2D.new()
+	solar_system_layer.name = "SolarSystemLayer"
+	solar_system_layer.z_index = -80
+	solar_system_layer.draw.connect(_on_solar_system_layer_draw)
+	add_child(solar_system_layer)
+	
+	asteroid_belt_points.clear()
+	for i in 180:
+		var angle := (float(i) / 180.0) * TAU + randf_range(-0.018, 0.018)
+		var radius := randf_range(660.0, 780.0)
+		asteroid_belt_points.append(Vector2(cos(angle), sin(angle)) * radius)
+
+
+func update_solar_system_layer(delta: float) -> void:
+	if solar_system_layer == null:
+		return
+	
+	solar_system_scroll_offset -= ship_velocity * delta * solar_system_scroll_multiplier
+	solar_system_layer.queue_redraw()
+
+
+func _on_solar_system_layer_draw() -> void:
+	if solar_system_layer == null:
+		return
+	
+	var screen_center := get_viewport_rect().size * 0.5
+	var system_center := screen_center + solar_system_scroll_offset
+	
+	draw_orbit(system_center, 210.0)
+	draw_orbit(system_center, 360.0)
+	draw_orbit(system_center, 520.0)
+	draw_orbit(system_center, 1020.0)
+	draw_asteroid_belt(system_center)
+	
+	solar_system_layer.draw_circle(system_center, 56.0, Color("#FFD76A"))
+	solar_system_layer.draw_circle(system_center, 34.0, Color("#FFF1A3"))
+	draw_planet(system_center + Vector2(210.0, -18.0), 18.0, Color("#4FB2FF"), Color("#1E5F9B"))
+	draw_planet(system_center + Vector2(-110.0, 342.0), 26.0, Color("#C46B38"), Color("#6F321F"))
+	draw_planet(system_center + Vector2(-492.0, -168.0), 34.0, Color("#6FD08C"), Color("#275D43"))
+	draw_gas_giant(system_center + Vector2(750.0, 690.0))
+
+
+func draw_orbit(center: Vector2, radius: float) -> void:
+	solar_system_layer.draw_arc(center, radius, 0.0, TAU, 160, Color(0.3, 0.45, 0.58, 0.22), 1.5)
+
+
+func draw_planet(position: Vector2, radius: float, color: Color, shadow_color: Color) -> void:
+	solar_system_layer.draw_circle(position, radius, color)
+	solar_system_layer.draw_circle(position + Vector2(radius * 0.28, radius * 0.18), radius * 0.68, color_with_alpha(shadow_color, 0.5))
+
+
+func color_with_alpha(color: Color, alpha: float) -> Color:
+	return Color(color.r, color.g, color.b, alpha)
+
+
+func draw_gas_giant(position: Vector2) -> void:
+	var radius := 72.0
+	solar_system_layer.draw_circle(position, radius, Color("#D8B06C"))
+	solar_system_layer.draw_rect(Rect2(position + Vector2(-radius, -30.0), Vector2(radius * 2.0, 12.0)), Color("#A86F46"))
+	solar_system_layer.draw_rect(Rect2(position + Vector2(-radius, -5.0), Vector2(radius * 2.0, 10.0)), Color("#F0D59A"))
+	solar_system_layer.draw_rect(Rect2(position + Vector2(-radius, 22.0), Vector2(radius * 2.0, 14.0)), Color("#9F6440"))
+	solar_system_layer.draw_arc(position, radius * 1.45, -0.2, PI + 0.2, 120, Color(0.82, 0.76, 0.62, 0.55), 4.0)
+
+
+func draw_asteroid_belt(center: Vector2) -> void:
+	for point in asteroid_belt_points:
+		var asteroid_position := center + point
+		var size := 1.5 + fmod(absf(point.x + point.y), 3.0)
+		solar_system_layer.draw_circle(asteroid_position, size, Color("#7A716A"))
 
 
 func begin_mining_approach(asteroid: Area2D) -> void:

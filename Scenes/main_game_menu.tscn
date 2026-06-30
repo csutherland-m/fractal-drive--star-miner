@@ -2,40 +2,16 @@
 
 [ext_resource type="Script" uid="uid://chahva2xe1m41" path="res://Scripts/main_game_menu.gd" id="1_4qh0h"]
 [ext_resource type="Texture2D" uid="uid://bh0f4nyf46ieu" path="res://Sprites/Backgrounds/Main Menu Backgrounds/main_menu_0.png" id="1_oovcn"]
-[ext_resource type="Texture2D" uid="uid://c1h0e1a4m2jej" path="res://Sprites/Backgrounds/Main Menu Backgrounds/main_menu_1.png" id="2_4qh0h"]
-[ext_resource type="Texture2D" uid="uid://c8d23q8oag2jp" path="res://Sprites/Backgrounds/Main Menu Backgrounds/main_menu_2.png" id="3_e8ehc"]
-[ext_resource type="Texture2D" uid="uid://cesl72p0njb7o" path="res://Sprites/Backgrounds/Main Menu Backgrounds/main_menu_3.png" id="4_eq7l4"]
-[ext_resource type="Texture2D" uid="uid://bceqxcrlfh46h" path="res://Sprites/Backgrounds/Main Menu Backgrounds/main_menu_4.png" id="5_as7q7"]
-[ext_resource type="Texture2D" uid="uid://enbqcrpv1jdj" path="res://Sprites/Backgrounds/Main Menu Backgrounds/main_menu_5.png" id="6_604mq"]
-[ext_resource type="Texture2D" uid="uid://c0rs015euxyxc" path="res://Sprites/Backgrounds/Main Menu Backgrounds/main_menu_6.png" id="7_xqg6m"]
 
 [sub_resource type="SpriteFrames" id="SpriteFrames_ygjpd"]
 animations = [{
 "frames": [{
 "duration": 1.0,
 "texture": ExtResource("1_oovcn")
-}, {
-"duration": 1.0,
-"texture": ExtResource("2_4qh0h")
-}, {
-"duration": 1.0,
-"texture": ExtResource("3_e8ehc")
-}, {
-"duration": 1.0,
-"texture": ExtResource("4_eq7l4")
-}, {
-"duration": 1.0,
-"texture": ExtResource("5_as7q7")
-}, {
-"duration": 1.0,
-"texture": ExtResource("6_604mq")
-}, {
-"duration": 1.0,
-"texture": ExtResource("7_xqg6m")
 }],
-"loop": true,
+"loop": false,
 "name": &"default",
-"speed": 5.0
+"speed": 0.0
 }]
 
 [node name="MainGameMenu" type="Node2D" unique_id=2032327119]
@@ -43,9 +19,6 @@ script = ExtResource("1_4qh0h")
 
 [node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="." unique_id=1742027764]
 sprite_frames = SubResource("SpriteFrames_ygjpd")
-frame = 6
-frame_progress = 0.30460694
-speed_scale = 0.25
 centered = false
 
 [node name="MenuUI" type="CanvasLayer" parent="." unique_id=369401997]

@@ -8,7 +8,8 @@ extends Node2D
 func _ready() -> void:
 	menu_root.theme = GameTheme.create_button_theme()
 	
-	animated_background.play("default")
+	animated_background.stop()
+	animated_background.frame = 0
 	
 	play_button.pressed.connect(_on_play_pressed)
 	quit_button.pressed.connect(_on_quit_pressed)

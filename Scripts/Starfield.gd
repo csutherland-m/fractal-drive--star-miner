@@ -13,6 +13,7 @@ extends Node2D
 @export var blink_strength: float = 0.35
 
 @export var star_drift_speed: Vector2 = Vector2(-5, 0)
+@export var redraws_per_second: float = 30.0
 
 @export var edge_respawn_margin: float = 20.0
 
@@ -21,6 +22,7 @@ extends Node2D
 var stars: Array = []
 var cluster_centers: Array[Vector2] = []
 var time_passed: float = 0.0
+var redraw_timer: float = 0.0
 
 
 func _ready() -> void:
@@ -35,7 +37,14 @@ func _process(delta: float) -> void:
 		star.position += star_drift_speed * star.depth * delta
 		wrap_star(star)
 	
-	queue_redraw()
+	redraw_timer += delta
+	if redraws_per_second <= 0.0:
+		return
+	
+	var redraw_interval := 1.0 / redraws_per_second
+	if redraw_timer >= redraw_interval:
+		redraw_timer = 0.0
+		queue_redraw()
 
 
 func generate_starfield() -> void:
@@ -43,6 +52,8 @@ func generate_starfield() -> void:
 	cluster_centers.clear()
 	
 	var screen_size := get_viewport_rect().size
+	var safe_min_star_size := maxf(0.25, min_star_size)
+	var safe_max_star_size := clampf(max_star_size, safe_min_star_size, 3.0)
 	
 	for i in cluster_count:
 		cluster_centers.append(Vector2(
@@ -83,7 +94,7 @@ func generate_starfield() -> void:
 		
 		var star = {
 			"position": star_position,
-			"size": randf_range(min_star_size, max_star_size) * depth,
+			"size": clampf(randf_range(safe_min_star_size, safe_max_star_size) * depth, 0.35, 2.5),
 			"depth": depth,
 			"base_color": star_color,
 			"base_brightness": randf_range(0.45, 1.0),
@@ -127,4 +138,4 @@ func _draw() -> void:
 		var final_color: Color = star.base_color * brightness
 		final_color.a = brightness
 		
-		draw_circle(star.position, star.size, final_color)
+		draw_circle(star.position, minf(star.size, 2.5), final_color)

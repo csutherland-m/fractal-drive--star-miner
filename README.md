@@ -5,8 +5,10 @@ This is the Codex working copy of the Godot project.
 ## Current Shape
 
 - Main menu loads first.
+- The main menu uses a single static baked star background to avoid oversized animated stars and reduce title-screen GPU/CPU load.
 - Play starts the flight test scene.
-- The player starship stays centered while the starfield and asteroids scroll.
+- The player starship stays centered while the starfield, asteroids, and a basic shape-based solar-system layer scroll.
+- The flight scene is zoomed out for a larger playable field with three planets, a gas giant, orbit rings, and an asteroid belt.
 - The starship uses side-profile art, slowly rotates toward its travel direction, mirrors to stay upright, and has a visible engine flame.
 - Large mineable asteroids trigger a short orbit-and-lander cutscene before the asteroid mining scene.
 - The asteroid mining scene has movement, gravity, collision, fuel, cargo, fog of war, and one-block mining.
@@ -14,8 +16,9 @@ This is the Codex working copy of the Godot project.
 - The mining HUD includes a bottom gauge cluster image with live fuel needle and depth readout overlays; depth increases by 10m per row below the surface.
 - The mining map extends downward as the player descends, with a camera follow, nearby tile reveal, and visible starting surface layers.
 - The mining world currently uses a deeper 240-row resource progression curve for playtesting faster exploration.
+- Dirt blocks use a depth tint overlay: they darken toward chocolate brown, snap to bright red at 1000m, then fade toward a darker burnt red.
 - The mining surface has a landed shop ship resting above the center tile, while the miner starts two tiles to its right.
-- The lander menu now shows a Return to Starship goal requiring 20 tons of rocket fuel before departure is available.
+- The lander menu now shows a Return to Starship goal requiring 20 tons of rocket fuel and the Planet Core before departure is available.
 - Planetary Upgrades now exists as an upgrade category; the first one-time build is a Fuel Depot next to the lander.
 
 ## Main Scenes
@@ -29,7 +32,7 @@ This is the Codex working copy of the Godot project.
 
 - `Scripts/main_game_menu.gd`: menu buttons.
 - `Scripts/FlightTest.gd`: ship input, rotation, scrolling space.
-- `Scripts/Starfield.gd`: generated moving star background.
+- `Scripts/Starfield.gd`: generated moving star background with capped star sizes and throttled redraws.
 - `Scripts/AsteroidSpawner.gd`: creates debris and mineable asteroids.
 - `Scripts/SpaceDebris.gd`: asteroid/debris behavior and scene transition.
 - `Scripts/AsteroidMining.gd`: generated mining grid and future mining controls.
@@ -50,7 +53,10 @@ This is the Codex working copy of the Godot project.
 - The base miner moves 30 percent faster and mines 50 percent faster than the first prototype tuning.
 - Block hardness increases by 10 percent per row below the surface.
 - Dirt and rock do not take cargo space.
+- Starting two rows below the surface, dirt has a 2 percent chance to seed a small void pocket. Each pocket rolls 1-4 connected blocks, randomizes its shape from the starting dirt block, and remains hidden by fog of war until revealed.
+- Lode Stone starts appearing at 500m by replacing some normal rock blocks. It starts at a 1 percent conversion chance, scales upward with depth, cannot be mined yet, and is affected by gravity when unsupported.
 - Normal ore blocks roll their yield when mined, giving 2-10 units of that resource. Raw fuel blocks still yield one raw fuel item for processing.
+- Planet Core is a unique once-per-planet material. For current testing it appears once somewhere on the 1000m row; later this should be moved to the intended 5000m row.
 - Ore and raw fuel fill cargo. Starting miner cargo capacity is 100 units.
 - The lander Cargo Hold starts at 5,000 units, 50x the base miner capacity, and deposits stop when it is full.
 - Raw fuel is a coal-tinted dirt-style block that appears more often than iron but less often than copper.
@@ -66,9 +72,10 @@ This is the Codex working copy of the Godot project.
 - Refueling the miner consumes lander mining fuel kg when available.
 - If the lander mining fuel tank is empty, emergency refueling costs 10 Credits per kg.
 - The lander has separate storage tanks for mining fuel and rocket fuel.
-- The base lander rocket fuel tank holds 20 tons. Returning to the starship currently requires 20 tons and uses a stubbed scene-transition message.
+- The base lander rocket fuel tank holds 20 tons. Returning to the starship currently requires 20 tons plus the Planet Core and triggers the current win-state message before returning to the main menu.
 - Building the Fuel Depot adds 20 tons of rocket fuel capacity, raising total first-pass storage from 20 to 40 tons.
 - Touch the lander above the surface to deposit cargo, open the Lander screen, sell ore, process raw fuel, refuel, and buy upgrades.
+- The shop main screen includes a playtest God Mode button that maxes all upgrade levels, fills current miner/lander fuel tanks, and prevents miner fuel from depleting for the run.
 - The Lander screen shows Cargo Hold contents in a left-side icon list.
 - Selling, processing, and upgrades can use resources from both miner cargo and the cargo hold.
 - Existing non-credit upgrade resource costs are scaled by 10 for the new 2-10 ore yield economy. Credit costs are unchanged.
