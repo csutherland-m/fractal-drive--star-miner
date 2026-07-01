@@ -6,12 +6,14 @@ This is the Codex working copy of the Godot project.
 
 - Main menu loads first.
 - The main menu uses a single static baked star background to avoid oversized animated stars and reduce title-screen GPU/CPU load.
-- Play starts the flight test scene.
-- The player starship stays centered while the starfield, asteroids, and a basic shape-based solar-system layer scroll.
-- The flight scene is zoomed out for a larger playable field with three planets, a gas giant, orbit rings, and an asteroid belt.
-- The starship uses side-profile art, slowly rotates toward its travel direction, mirrors to stay upright, and has a visible engine flame.
-- Large mineable asteroids trigger a short orbit-and-lander cutscene before the asteroid mining scene.
-- The asteroid mining scene has movement, gravity, collision, fuel, cargo, fog of war, and one-block mining.
+- Play starts the Star System View.
+- The Star System View is a clickable 2D local-system map with a star, orbit rings, orbiting planets, an asteroid belt, and a starship marker.
+- Clicking a planet plots a curved orbital-style ship travel path, animates the starship to the planet, then enters the current planet mining scene.
+- Clicking the asteroid belt plots a curved approach and currently stops at a placeholder arrival message; the future asteroid-belt flight scene will branch from here.
+- The Star System View now includes strategic combat encounters: three visible raider icons orbit the system, and one surprise ambush interrupts the first normal travel attempt.
+- Combat is resolved in a modal window with round-by-round rolls. The starter ship has 10,000 hull, enemies use 1,000 hull for normal raiders, damage is in the hundreds, and armor plus shields block roughly half of incoming raw damage.
+- The current mining scene has movement, gravity, collision, fuel, cargo, fog of war, and one-block mining. It is now treated as the planet mining scene, even though the file is still named `AsteroidMining.tscn` for stability.
+- Mining feedback is centralized in `Scripts/MiningEffects.gd`, which currently creates code-generated placeholder dust, sparks, floating pickup text, lode stone impact bursts, and camera shake.
 - Miner cargo displays as resource icons with counts in the mining HUD.
 - The mining HUD includes a bottom gauge cluster image with live fuel needle and depth readout overlays; depth increases by 10m per row below the surface.
 - The mining map extends downward as the player descends, with a camera follow, nearby tile reveal, and visible starting surface layers.
@@ -24,25 +26,29 @@ This is the Codex working copy of the Godot project.
 ## Main Scenes
 
 - `Scenes/main_game_menu.tscn`: title/menu screen.
-- `Scenes/FlightTest.tscn`: current space flight scene.
-- `Scenes/AsteroidMining.tscn`: early mining prototype.
+- `Scenes/StarSystemView.tscn`: clickable local star-system navigation scene.
+- `Scenes/AsteroidMining.tscn`: current planet mining scene. The file has not been renamed yet.
 - `Scenes/UI/PauseMenu.tscn`: reusable pause menu.
 
 ## Main Scripts
 
 - `Scripts/main_game_menu.gd`: menu buttons.
-- `Scripts/FlightTest.gd`: ship input, rotation, scrolling space.
+- `Scripts/StarSystemView.gd`: local-system map, orbiting planets, click targets, and curved ship travel.
+- `Scripts/CombatResolver.gd`: strategic combat stats and round-resolution math.
 - `Scripts/Starfield.gd`: generated moving star background with capped star sizes and throttled redraws.
 - `Scripts/AsteroidSpawner.gd`: creates debris and mineable asteroids.
 - `Scripts/SpaceDebris.gd`: asteroid/debris behavior and scene transition.
 - `Scripts/AsteroidMining.gd`: generated mining grid and future mining controls.
+- `Scripts/MiningEffects.gd`: reusable mining feedback effects with exported particle texture slots for replacement art.
 - `Scripts/PauseMenu.gd`: shared pause menu signals.
 - `Scripts/GameTheme.gd`: button styling.
 
-## Flight Test Controls
+## Star System View Controls
 
-- `W/A/S/D`: main thrust direction.
-- `Q/E`: strafe left or right.
+- Left click a planet: fly to that planet and enter planet mining.
+- Left click the asteroid belt: fly to the belt placeholder arrival.
+- Left click a raider icon: open the strategic combat panel.
+- In combat, use `Resolve Round` or `Auto Resolve`; close the panel after combat is finished.
 - `Esc`: pause.
 
 ## Mining Test Controls
@@ -50,11 +56,12 @@ This is the Codex working copy of the Godot project.
 - `A/D` or arrow keys: move.
 - `W` or up arrow: thrust upward like a small rocket.
 - Hold left, right, or down toward a block to mine it. Blocks have hardness/HP, and the drill deals damage over time.
+- Mining emits placeholder dust/sparks and floating pickup text. These are code-driven now; replacement particle textures can be assigned on `MiningEffects.gd` later without changing mining logic.
 - The base miner moves 30 percent faster and mines 50 percent faster than the first prototype tuning.
 - Block hardness increases by 10 percent per row below the surface.
 - Dirt and rock do not take cargo space.
 - Starting two rows below the surface, dirt has a 2 percent chance to seed a small void pocket. Each pocket rolls 1-4 connected blocks, randomizes its shape from the starting dirt block, and remains hidden by fog of war until revealed.
-- Lode Stone starts appearing at 500m by replacing some normal rock blocks. It starts at a 1 percent conversion chance, scales upward with depth, cannot be mined yet, and is affected by gravity when unsupported.
+- Lode Stone starts appearing at 500m by replacing some normal rock blocks. It starts at a 1 percent conversion chance, scales upward with depth, cannot be mined yet, and is affected by gravity when unsupported. Landing impacts trigger a dust burst and short camera shake.
 - Normal ore blocks roll their yield when mined, giving 2-10 units of that resource. Raw fuel blocks still yield one raw fuel item for processing.
 - Planet Core is a unique once-per-planet material. For current testing it appears once somewhere on the 1000m row; later this should be moved to the intended 5000m row.
 - Ore and raw fuel fill cargo. Starting miner cargo capacity is 100 units.
@@ -91,6 +98,13 @@ This is the Codex working copy of the Godot project.
 - `Sprites/UI/fuel_pipe_horizontal_placeholder.png`: cropped horizontal pipe used for the current Fuel Depot connection.
 - `Sprites/UI/fuel_pipe_vertical_placeholder.png`: cropped vertical pipe reserved for future infrastructure.
 - Matching `*_source.png` files are the original generated chroma-key images.
+
+## Replaceable Feedback Art
+
+- `Scripts/MiningEffects.gd` exposes `dust_particle_texture`, `spark_particle_texture`, and `impact_particle_texture`.
+- If these texture slots are empty, the game generates small placeholder particle textures in code.
+- Future polished art should replace those exported textures instead of changing the mining, ore, or lode stone logic.
+- Crack/damage overlay art is not yet implemented; the current mining progress overlay remains code-drawn.
 
 ## Future Planetary Infrastructure
 

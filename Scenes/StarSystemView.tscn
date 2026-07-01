@@ -1,0 +1,37 @@
+[gd_scene format=3 uid="uid://bcv8277vbxx53"]
+
+[ext_resource type="Script" path="res://Scripts/StarSystemView.gd" id="1_q0xdy"]
+[ext_resource type="Texture2D" path="res://Sprites/Vehicles/StarShipSideEdited.png" id="2_d0xyq"]
+[ext_resource type="Script" uid="uid://dyx6o0e0qd0jb" path="res://Scripts/Starfield.gd" id="3_y6yeu"]
+[ext_resource type="PackedScene" uid="uid://b2yigfjj8m4jt" path="res://Scenes/UI/PauseMenu.tscn" id="4_scco0"]
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_7tra8"]
+
+[node name="StarSystemView" type="Node2D" unique_id=1562977409]
+script = ExtResource("1_q0xdy")
+
+[node name="Starfield" type="Node2D" parent="." unique_id=287411099]
+z_index = -100
+script = ExtResource("3_y6yeu")
+cluster_count = 10
+cluster_spread = 300.0
+random_star_ratio = 0.25
+max_star_size = 2.2
+blink_speed_min = 0.25
+blink_speed_max = 1.6
+blink_strength = 0.25
+star_drift_speed = Vector2(0, 0)
+edge_respawn_margin = 40.0
+
+[node name="PlayerShip" type="Area2D" parent="." unique_id=583142554]
+position = Vector2(960, 900)
+scale = Vector2(0.18, 0.18)
+
+[node name="ShipSprite" type="Sprite2D" parent="PlayerShip" unique_id=435639723]
+texture = ExtResource("2_d0xyq")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="PlayerShip" unique_id=398388599]
+scale = Vector2(0.99999994, 0.99999994)
+shape = SubResource("CircleShape2D_7tra8")
+
+[node name="PauseMenu" parent="." unique_id=705735553 instance=ExtResource("4_scco0")]

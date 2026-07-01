@@ -1,6 +1,7 @@
 extends Node2D
 
 const FogOverlayScript := preload("res://Scripts/FogOverlay.gd")
+const MiningEffectsScript := preload("res://Scripts/MiningEffects.gd")
 const ResourceTileTexture := preload("res://Sprites/TileSets/MiningTilesVariantsDugDirt64.png")
 const GaugeClusterTexture := preload("res://Sprites/UI/gauge_cluster_concept.png")
 const FuelDepotTexture := preload("res://Sprites/UI/fuel_depot_placeholder.png")
@@ -140,6 +141,7 @@ enum BlockType {
 @export var warpgems_hardness: float = 3.5
 @export var blackholecrystals_hardness: float = 3.5
 @export var depth_hardness_increase_per_row: float = 0.1
+@export var mining_feedback_interval_seconds: float = 0.08
 
 var is_paused: bool = false
 var is_shop_open: bool = false
@@ -197,6 +199,7 @@ var planned_pipe_connections: Array[Dictionary] = []
 var game_over_label: Label
 var countdown_label: Label
 var mining_camera: Camera2D
+var mining_effects: Node2D
 var fog_overlay: Node2D
 var dirt_depth_tint_overlay: Node2D
 var mining_blink_overlay: Polygon2D
@@ -205,6 +208,7 @@ var revealed_cells: Dictionary = {}
 var active_mining_cell: Vector2i = Vector2i(-9999, -9999)
 var active_mining_damage: float = 0.0
 var active_mining_elapsed: float = 0.0
+var mining_feedback_cooldown: float = 0.0
 var active_block_hardness: float = 0.0
 var lodestone_fall_speed: float = 0.0
 var lodestone_fall_distance: float = 0.0
@@ -228,6 +232,7 @@ func _ready() -> void:
 	create_surface_shop()
 	create_dirt_depth_tint_overlay()
 	create_mining_camera()
+	create_mining_effects()
 	create_fog_overlay()
 	create_mining_overlays()
 	create_shop_ui()
@@ -263,6 +268,7 @@ func _physics_process(delta: float) -> void:
 	
 	handle_player_movement(delta)
 	drain_fuel_for_movement(delta)
+	update_mining_feedback_cooldown(delta)
 	update_fuel_bar(delta)
 	check_shop_collision()
 	ensure_world_generated_near_player()
@@ -759,8 +765,19 @@ func update_camera() -> void:
 	if mining_camera == null:
 		return
 	
-	mining_camera.global_position = player_marker.global_position.round()
+	var camera_offset := Vector2.ZERO
+	if mining_effects != null and mining_effects.has_method("get_camera_offset"):
+		camera_offset = mining_effects.get_camera_offset()
+	
+	mining_camera.global_position = (player_marker.global_position + camera_offset).round()
 	starfield.global_position = (mining_camera.global_position - get_viewport_rect().size * 0.5).round()
+
+
+func create_mining_effects() -> void:
+	mining_effects = MiningEffectsScript.new()
+	mining_effects.name = "MiningEffects"
+	mining_effects.z_index = PLAYER_Z_INDEX - 1
+	mine_tiles.add_child(mining_effects)
 
 
 func create_fog_overlay() -> void:
@@ -1009,6 +1026,7 @@ func try_mine_with_movement_input(delta: float) -> void:
 	
 	active_mining_elapsed += delta
 	active_mining_damage += drill_damage_per_second * delta
+	play_mining_feedback_if_ready(target_cell)
 	update_hud()
 	
 	if active_mining_damage >= active_block_hardness:
@@ -1020,6 +1038,7 @@ func start_mining_cell(target_cell: Vector2i) -> void:
 	active_mining_cell = target_cell
 	active_mining_damage = 0.0
 	active_mining_elapsed = 0.0
+	mining_feedback_cooldown = 0.0
 	var block_type: BlockType = block_types_by_cell.get(target_cell, BlockType.ROCK)
 	active_block_hardness = get_depth_scaled_hardness(block_type, target_cell.y)
 	update_hud()
@@ -1032,6 +1051,7 @@ func reset_mining_progress() -> void:
 	active_mining_cell = Vector2i(-9999, -9999)
 	active_mining_damage = 0.0
 	active_mining_elapsed = 0.0
+	mining_feedback_cooldown = 0.0
 	active_block_hardness = 0.0
 	update_hud()
 
@@ -1055,10 +1075,37 @@ func mine_target_cell(target_cell: Vector2i) -> void:
 		var amount_to_add: int = mini(yield_amount, get_inventory_room())
 		resources[resource_name] = int(resources.get(resource_name, 0)) + amount_to_add
 		print("Mined %s: +%d" % [resource_name, amount_to_add])
+		play_block_mined_feedback(target_cell, resource_name, amount_to_add)
+	else:
+		play_block_mined_feedback(target_cell, resource_name, 0)
 	
 	if dirt_depth_tint_overlay != null:
 		dirt_depth_tint_overlay.queue_redraw()
 	update_hud()
+
+
+func update_mining_feedback_cooldown(delta: float) -> void:
+	if mining_feedback_cooldown > 0.0:
+		mining_feedback_cooldown = maxf(mining_feedback_cooldown - delta, 0.0)
+
+
+func play_mining_feedback_if_ready(target_cell: Vector2i) -> void:
+	if mining_effects == null or mining_feedback_cooldown > 0.0:
+		return
+	
+	var block_type: BlockType = block_types_by_cell.get(target_cell, BlockType.ROCK)
+	var block_name := get_resource_name_for_block_type(block_type)
+	var target_position := mine_tiles.map_to_local(target_cell)
+	mining_effects.play_drill_feedback(target_position, block_name, last_mine_direction)
+	mining_feedback_cooldown = mining_feedback_interval_seconds
+
+
+func play_block_mined_feedback(target_cell: Vector2i, resource_name: String, amount: int) -> void:
+	if mining_effects == null:
+		return
+	
+	var target_position := mine_tiles.map_to_local(target_cell)
+	mining_effects.play_block_mined(target_position, resource_name, amount)
 
 
 func update_lodestone_gravity(delta: float) -> void:
@@ -1139,6 +1186,17 @@ func move_lodestone_block(from_cell: Vector2i, to_cell: Vector2i) -> void:
 		tile_source_id,
 		get_tile_coords_for_block_type(BlockType.LODESTONE)
 	)
+	
+	if not can_lodestone_fall_to(to_cell + Vector2i.DOWN):
+		play_lodestone_impact_feedback(to_cell)
+
+
+func play_lodestone_impact_feedback(cell: Vector2i) -> void:
+	if mining_effects == null:
+		return
+	
+	var target_position := mine_tiles.map_to_local(cell)
+	mining_effects.play_lodestone_impact(target_position, lodestone_fall_speed)
 
 
 func is_inventory_resource(resource_name: String) -> bool:
