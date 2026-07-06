@@ -8,9 +8,15 @@ This is the Codex working copy of the Godot project.
 - The main menu uses a single static baked star background to avoid oversized animated stars and reduce title-screen GPU/CPU load.
 - Play starts the Star System View.
 - The Star System View is a clickable 2D local-system map with a star, orbit rings, orbiting planets, an asteroid belt, and a starship marker.
-- Clicking a planet plots a curved orbital-style ship travel path, animates the starship to the planet, then enters the current planet mining scene.
+- Planet visuals use placeholder sprite art from `Sprites/Planets/Placeholders/`.
+- Each generated local system guarantees at least one rocky planet and one gas giant, then fills the remaining planet slots from a random mix of rocky, ice, lava, and gas giant worlds.
+- Solar-system orbital motion is scaled by `ORBIT_SPEED_MULTIPLIER = 0.1` in `Scripts/StarSystemView.gd` so planets, enemies, the asteroid belt, and player orbital motion move at roughly one tenth of the previous speed.
+- The player ship now spawns outside the asteroid belt and begins in orbit around the system center before the player chooses a destination.
+- Clicking a planet predicts the planet's future orbital position based on estimated transfer time, plots a curved orbital-style path to that intercept, freezes orbital motion on arrival, then enters the current planet mining scene.
 - Clicking the asteroid belt plots a curved approach and currently stops at a placeholder arrival message; the future asteroid-belt flight scene will branch from here.
-- The Star System View now includes strategic combat encounters: three visible raider icons orbit the system, and one surprise ambush interrupts the first normal travel attempt.
+- The Star System View now includes strategic combat encounters: three visible raider HUD markers orbit the system, and one surprise ambush interrupts the first normal travel attempt.
+- Enemy markers are custom-drawn hostile HUD reticles instead of plain red triangle placeholders.
+- Clicking a raider transfers the player ship to the enemy orbit first, then opens the combat encounter once the transfer completes.
 - Combat is resolved in a modal window with round-by-round rolls. The starter ship has 10,000 hull, enemies use 1,000 hull for normal raiders, damage is in the hundreds, and armor plus shields block roughly half of incoming raw damage.
 - The current mining scene has movement, gravity, collision, fuel, cargo, fog of war, and one-block mining. It is now treated as the planet mining scene, even though the file is still named `AsteroidMining.tscn` for stability.
 - Mining feedback is centralized in `Scripts/MiningEffects.gd`, which currently creates code-generated placeholder dust, sparks, floating pickup text, lode stone impact bursts, and camera shake.
@@ -47,7 +53,7 @@ This is the Codex working copy of the Godot project.
 
 - Left click a planet: fly to that planet and enter planet mining.
 - Left click the asteroid belt: fly to the belt placeholder arrival.
-- Left click a raider icon: open the strategic combat panel.
+- Left click a raider HUD marker: transfer to that enemy orbit, then open the strategic combat panel.
 - In combat, use `Resolve Round` or `Auto Resolve`; close the panel after combat is finished.
 - `Esc`: pause.
 
@@ -99,6 +105,13 @@ This is the Codex working copy of the Godot project.
 - `Sprites/UI/fuel_pipe_vertical_placeholder.png`: cropped vertical pipe reserved for future infrastructure.
 - Matching `*_source.png` files are the original generated chroma-key images.
 
+## Placeholder Planet Assets
+
+- `Sprites/Planets/Placeholders/ice_world.png`: icy world placeholder.
+- `Sprites/Planets/Placeholders/lava_world.png`: volcanic world placeholder.
+- `Sprites/Planets/Placeholders/ringed_gas_giant.png`: gas giant placeholder.
+- `Sprites/Planets/Placeholders/rocky_world.png`: rocky planet placeholder.
+
 ## Replaceable Feedback Art
 
 - `Scripts/MiningEffects.gd` exposes `dust_particle_texture`, `spark_particle_texture`, and `impact_particle_texture`.
@@ -116,7 +129,9 @@ This is the Codex working copy of the Godot project.
 ## Test Instructions
 
 - Run the project headless: `Godot_v4.6.3-stable_win64.exe --headless --path <project path> --quit`.
+- Run the star system scene headless: `Godot_v4.6.3-stable_win64.exe --headless --path <project path> res://Scenes/StarSystemView.tscn --quit`.
 - Run the mining scene headless: `Godot_v4.6.3-stable_win64.exe --headless --path <project path> res://Scenes/AsteroidMining.tscn --quit`.
+- In game, confirm the player starts beyond the asteroid belt, all orbiting bodies move slowly, raider markers look like hostile HUD reticles, raider clicks transfer the ship to enemy orbit before combat, and planet clicks intercept the future planet position before freezing and transitioning to mining.
 - In game, mine normal ore to confirm 2-10 unit rolls, deposit ore into the 5,000-unit Cargo Hold, process raw fuel, and build Planetary Upgrades -> Fuel Depot to confirm capacity increases to 40 tons.
 
 ## Recommended Next Step

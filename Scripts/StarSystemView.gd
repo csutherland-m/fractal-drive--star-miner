@@ -1,6 +1,11 @@
 extends Node2D
 
 const CombatResolverScript := preload("res://Scripts/CombatResolver.gd")
+const IceWorldTexture := preload("res://Sprites/Planets/Placeholders/ice_world.png")
+const LavaWorldTexture := preload("res://Sprites/Planets/Placeholders/lava_world.png")
+const RingedGasGiantTexture := preload("res://Sprites/Planets/Placeholders/ringed_gas_giant.png")
+const RockyWorldTexture := preload("res://Sprites/Planets/Placeholders/rocky_world.png")
+const ORBIT_SPEED_MULTIPLIER := 0.1
 
 @onready var player_ship: Area2D = $PlayerShip
 @onready var ship_sprite: Sprite2D = $PlayerShip/ShipSprite
@@ -17,21 +22,32 @@ const CombatResolverScript := preload("res://Scripts/CombatResolver.gd")
 @export var asteroid_belt_point_count: int = 220
 @export var intentional_enemy_count: int = 3
 @export var enemy_icon_radius: float = 18.0
+@export var player_outer_orbit_padding: float = 130.0
+@export var player_orbit_speed: float = 0.18
+@export var asteroid_belt_orbit_speed: float = 0.025
+@export var ship_transfer_speed: float = 360.0
+@export var min_transfer_seconds: float = 1.2
+@export var max_transfer_seconds: float = 4.5
+@export var intercept_freeze_seconds: float = 0.45
 
 var is_paused: bool = false
 var is_traveling: bool = false
 var is_combat_open: bool = false
+var orbits_paused: bool = false
 var has_surprise_encounter_triggered: bool = false
 var travel_elapsed: float = 0.0
+var travel_duration: float = 2.2
 var travel_start: Vector2 = Vector2.ZERO
 var travel_control: Vector2 = Vector2.ZERO
 var travel_end: Vector2 = Vector2.ZERO
 var travel_destination_type: String = ""
 var travel_destination_name: String = ""
+var travel_target_enemy_index: int = -1
 var system_center: Vector2 = Vector2.ZERO
 var planets: Array[Dictionary] = []
 var enemies: Array[Dictionary] = []
 var asteroid_belt_points: Array[Vector2] = []
+var asteroid_belt_angle: float = 0.0
 var selected_route: Line2D
 var engine_flame: Polygon2D
 var inner_engine_flame: Polygon2D
@@ -51,16 +67,19 @@ var active_enemy: Dictionary = {}
 var active_enemy_index: int = -1
 var combat_round: int = 0
 var combat_log_lines: Array[String] = []
+var player_orbit_radius: float = 0.0
+var player_orbit_angle: float = 0.0
 
 
 func _ready() -> void:
+	randomize()
 	pause_menu.resume_requested.connect(_on_resume_pressed)
 	pause_menu.quit_requested.connect(_on_quit_pressed)
 	starship_side_texture = load(starship_side_texture_path) as Texture2D
 	ship_sprite.texture = starship_side_texture
 	player_ship.scale = Vector2(zoomed_out_ship_scale, zoomed_out_ship_scale)
 	system_center = get_viewport_rect().size * 0.5
-	player_ship.global_position = system_center + Vector2(0.0, 420.0)
+	initialize_player_orbit()
 	player_combatant = CombatResolverScript.create_player_ship()
 	create_planets()
 	create_asteroid_belt()
@@ -76,41 +95,121 @@ func _process(delta: float) -> void:
 	if is_paused or is_combat_open:
 		return
 	
-	update_planets(delta)
-	update_enemies(delta)
+	if not orbits_paused:
+		update_planets(delta)
+		update_enemies(delta)
+		update_asteroid_belt(delta)
 	
 	if is_traveling:
 		update_travel(delta)
+	elif not orbits_paused:
+		update_player_orbit(delta)
 	
 	queue_redraw()
 
 
+func initialize_player_orbit() -> void:
+	player_orbit_radius = asteroid_belt_outer_radius + player_outer_orbit_padding
+	player_orbit_angle = PI * 0.5
+	player_ship.global_position = get_position_on_orbit(player_orbit_radius, player_orbit_angle)
+	update_ship_visual(get_orbit_tangent(player_orbit_angle))
+
+
 func create_planets() -> void:
-	planets = [
-		create_planet("Cinder", 210.0, 0.42, 0.15, 22.0, Color("#C46B38"), Color("#6F321F")),
-		create_planet("Verdant", 360.0, 0.24, 2.1, 32.0, Color("#6FD08C"), Color("#275D43")),
-		create_planet("Azure", 520.0, 0.16, 4.0, 26.0, Color("#4FB2FF"), Color("#1E5F9B")),
-		create_planet("Goliath", 930.0, 0.07, 0.7, 70.0, Color("#D8B06C"), Color("#8D5635")),
+	var selected_templates: Array[Dictionary] = [
+		get_planet_template("rocky"),
+		get_planet_template("gas_giant"),
 	]
+	var random_templates: Array[Dictionary] = [
+		get_planet_template("ice"),
+		get_planet_template("lava"),
+		get_planet_template("rocky"),
+		get_planet_template("gas_giant"),
+	]
+	var extra_planet_count := randi_range(2, 3)
+	
+	for i in extra_planet_count:
+		selected_templates.append(random_templates.pick_random())
+	
+	selected_templates.shuffle()
+	planets.clear()
+	
+	for i in selected_templates.size():
+		planets.append(create_planet_from_template(selected_templates[i], i))
+
+
+func get_planet_template(planet_type: String) -> Dictionary:
+	match planet_type:
+		"gas_giant":
+			return {
+				"name_options": ["Aurelia", "Goliath", "Caelus"],
+				"type": "Gas Giant",
+				"texture": RingedGasGiantTexture,
+				"radius": 78.0,
+				"draw_size": Vector2(190.0, 190.0),
+			}
+		"ice":
+			return {
+				"name_options": ["Borealis", "Frostmere", "Kryos"],
+				"type": "Ice World",
+				"texture": IceWorldTexture,
+				"radius": 38.0,
+				"draw_size": Vector2(86.0, 86.0),
+			}
+		"lava":
+			return {
+				"name_options": ["Cinder", "Ashfall", "Pyra"],
+				"type": "Lava World",
+				"texture": LavaWorldTexture,
+				"radius": 42.0,
+				"draw_size": Vector2(92.0, 92.0),
+			}
+		_:
+			return {
+				"name_options": ["Rusk", "Kepler", "Brindle"],
+				"type": "Rocky Planet",
+				"texture": RockyWorldTexture,
+				"radius": 36.0,
+				"draw_size": Vector2(80.0, 80.0),
+			}
+
+
+func create_planet_from_template(template: Dictionary, orbit_index: int) -> Dictionary:
+	var orbit_radius := 210.0 + float(orbit_index) * 155.0
+	var orbit_speed := maxf(0.08, 0.4 - float(orbit_index) * 0.065)
+	var start_angle := randf_range(0.0, TAU)
+	var name_options: Array = template["name_options"]
+	return create_planet(
+		name_options.pick_random(),
+		template["type"],
+		template["texture"],
+		template["draw_size"],
+		orbit_radius,
+		orbit_speed,
+		start_angle,
+		template["radius"]
+	)
 
 
 func create_planet(
 	planet_name: String,
+	planet_type: String,
+	texture: Texture2D,
+	draw_size: Vector2,
 	orbit_radius: float,
 	orbit_speed: float,
 	start_angle: float,
-	radius: float,
-	color: Color,
-	shadow_color: Color
+	radius: float
 ) -> Dictionary:
 	return {
 		"name": planet_name,
+		"type": planet_type,
+		"texture": texture,
+		"draw_size": draw_size,
 		"orbit_radius": orbit_radius,
 		"orbit_speed": orbit_speed,
 		"angle": start_angle,
 		"radius": radius,
-		"color": color,
-		"shadow_color": shadow_color,
 		"position": system_center + Vector2.RIGHT.rotated(start_angle) * orbit_radius,
 	}
 
@@ -176,7 +275,7 @@ func create_ui() -> void:
 	ui_layer.add_child(title_label)
 	
 	status_label = Label.new()
-	status_label.text = "Click a planet to descend. Click the asteroid belt to plot a future belt run."
+	status_label.text = "Click a planet to descend, a raider to transfer into combat, or the belt to plot a future run."
 	status_label.position = Vector2(28.0, 66.0)
 	status_label.add_theme_font_size_override("font_size", 18)
 	ui_layer.add_child(status_label)
@@ -245,8 +344,8 @@ func create_combat_panel(ui_layer: CanvasLayer) -> void:
 
 func update_planets(delta: float) -> void:
 	for planet in planets:
-		planet["angle"] += planet["orbit_speed"] * delta
-		planet["position"] = system_center + Vector2.RIGHT.rotated(planet["angle"]) * planet["orbit_radius"]
+		planet["angle"] += planet["orbit_speed"] * ORBIT_SPEED_MULTIPLIER * delta
+		planet["position"] = get_position_on_orbit(planet["orbit_radius"], planet["angle"])
 
 
 func update_enemies(delta: float) -> void:
@@ -254,13 +353,31 @@ func update_enemies(delta: float) -> void:
 		if enemy["defeated"]:
 			continue
 		
-		enemy["angle"] += enemy["orbit_speed"] * delta
-		enemy["position"] = system_center + Vector2.RIGHT.rotated(enemy["angle"]) * enemy["orbit_radius"]
+		enemy["angle"] += enemy["orbit_speed"] * ORBIT_SPEED_MULTIPLIER * delta
+		enemy["position"] = get_position_on_orbit(enemy["orbit_radius"], enemy["angle"])
+
+
+func update_asteroid_belt(delta: float) -> void:
+	asteroid_belt_angle += asteroid_belt_orbit_speed * ORBIT_SPEED_MULTIPLIER * delta
+
+
+func update_player_orbit(delta: float) -> void:
+	player_orbit_angle += player_orbit_speed * ORBIT_SPEED_MULTIPLIER * delta
+	player_ship.global_position = get_position_on_orbit(player_orbit_radius, player_orbit_angle)
+	update_ship_visual(get_orbit_tangent(player_orbit_angle))
+
+
+func get_position_on_orbit(orbit_radius: float, orbit_angle: float) -> Vector2:
+	return system_center + Vector2.RIGHT.rotated(orbit_angle) * orbit_radius
+
+
+func get_orbit_tangent(orbit_angle: float) -> Vector2:
+	return Vector2.RIGHT.rotated(orbit_angle + PI * 0.5)
 
 
 func update_travel(delta: float) -> void:
-	travel_elapsed = minf(travel_elapsed + delta, travel_seconds)
-	var t := smoothstep(0.0, 1.0, travel_elapsed / travel_seconds)
+	travel_elapsed = minf(travel_elapsed + delta, travel_duration)
+	var t := smoothstep(0.0, 1.0, travel_elapsed / travel_duration)
 	var previous_position := player_ship.global_position
 	player_ship.global_position = get_quadratic_bezier_point(t)
 	var tangent := player_ship.global_position - previous_position
@@ -270,7 +387,7 @@ func update_travel(delta: float) -> void:
 	
 	update_engine_flame(true, delta)
 	
-	if travel_elapsed >= travel_seconds:
+	if travel_elapsed >= travel_duration:
 		complete_travel()
 
 
@@ -288,15 +405,65 @@ func begin_travel_to(destination_type: String, destination_name: String, destina
 		open_combat_with_surprise_enemy()
 		return
 	
+	begin_transfer(destination_type, destination_name, destination_position)
+
+
+func begin_transfer(destination_type: String, destination_name: String, destination_position: Vector2) -> void:
 	is_traveling = true
 	travel_elapsed = 0.0
 	travel_start = player_ship.global_position
 	travel_end = destination_position
+	travel_duration = get_transfer_duration(travel_start, travel_end)
 	travel_destination_type = destination_type
 	travel_destination_name = destination_name
 	travel_control = get_orbitalish_control_point(travel_start, travel_end)
 	status_label.text = "Traveling to %s..." % destination_name
 	draw_route_preview()
+
+
+func get_transfer_duration(start_position: Vector2, end_position: Vector2) -> float:
+	var raw_seconds := start_position.distance_to(end_position) / maxf(ship_transfer_speed, 1.0)
+	return clampf(raw_seconds, min_transfer_seconds, max_transfer_seconds)
+
+
+func begin_planet_intercept(planet: Dictionary) -> void:
+	if is_traveling:
+		return
+	
+	if should_trigger_surprise_encounter():
+		open_combat_with_surprise_enemy()
+		return
+	
+	var intercept_position := predict_future_orbit_position(planet, player_ship.global_position)
+	begin_transfer("planet", planet["name"], intercept_position)
+
+
+func predict_future_orbit_position(target: Dictionary, start_position: Vector2) -> Vector2:
+	var predicted_position: Vector2 = target["position"]
+	var estimated_time := get_transfer_duration(start_position, predicted_position)
+	
+	for i in 3:
+		var future_angle: float = target["angle"] + target["orbit_speed"] * ORBIT_SPEED_MULTIPLIER * estimated_time
+		predicted_position = get_position_on_orbit(target["orbit_radius"], future_angle)
+		estimated_time = get_transfer_duration(start_position, predicted_position)
+	
+	return predicted_position
+
+
+func begin_enemy_orbit_transfer(enemy_index: int) -> void:
+	if enemy_index < 0 or enemy_index >= enemies.size():
+		return
+	
+	var enemy := enemies[enemy_index]
+	if enemy["defeated"]:
+		return
+	
+	travel_target_enemy_index = enemy_index
+	active_enemy = enemy
+	active_enemy["combatant"] = CombatResolverScript.create_enemy_ship(active_enemy["name"], false)
+	active_enemy_index = enemy_index
+	var intercept_position := predict_future_orbit_position(enemy, player_ship.global_position)
+	begin_transfer("enemy", enemy["name"], intercept_position)
 
 
 func get_orbitalish_control_point(start_position: Vector2, end_position: Vector2) -> Vector2:
@@ -323,12 +490,26 @@ func complete_travel() -> void:
 	is_traveling = false
 	update_engine_flame(false, 0.0)
 	selected_route.clear_points()
+	player_orbit_radius = player_ship.global_position.distance_to(system_center)
+	player_orbit_angle = (player_ship.global_position - system_center).angle()
 	
 	if travel_destination_type == "planet":
-		get_tree().change_scene_to_file(planet_mining_scene_path)
+		complete_planet_intercept()
+		return
+	
+	if travel_destination_type == "enemy":
+		status_label.text = "Player transferred to enemy orbit. Combat encounter ready."
+		open_combat_panel("Combat Encounter")
 		return
 	
 	status_label.text = "Asteroid belt approach plotted. Belt flight scene is the next build target."
+
+
+func complete_planet_intercept() -> void:
+	orbits_paused = true
+	status_label.text = "%s intercept complete. Preparing landing..." % travel_destination_name
+	await get_tree().create_timer(intercept_freeze_seconds).timeout
+	get_tree().change_scene_to_file(planet_mining_scene_path)
 
 
 func should_trigger_surprise_encounter() -> bool:
@@ -360,10 +541,7 @@ func open_combat_with_enemy(enemy_index: int) -> void:
 	if enemy["defeated"]:
 		return
 	
-	active_enemy = enemy
-	active_enemy["combatant"] = CombatResolverScript.create_enemy_ship(active_enemy["name"], false)
-	active_enemy_index = enemy_index
-	open_combat_panel("Combat Encounter")
+	begin_enemy_orbit_transfer(enemy_index)
 
 
 func open_combat_panel(panel_title: String) -> void:
@@ -541,7 +719,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		toggle_pause_menu()
 		return
 	
-	if is_paused or is_traveling or is_combat_open:
+	if is_paused or is_traveling or is_combat_open or orbits_paused:
 		return
 	
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
@@ -555,12 +733,12 @@ func handle_click(click_position: Vector2) -> void:
 			continue
 		
 		if click_position.distance_to(enemy["position"]) <= enemy_icon_radius + 12.0:
-			open_combat_with_enemy(i)
+			begin_enemy_orbit_transfer(i)
 			return
 	
 	for planet in planets:
 		if click_position.distance_to(planet["position"]) <= planet["radius"] + 16.0:
-			begin_travel_to("planet", planet["name"], planet["position"])
+			begin_planet_intercept(planet)
 			return
 	
 	var distance_from_star := click_position.distance_to(system_center)
@@ -617,7 +795,7 @@ func draw_star() -> void:
 
 func draw_asteroid_belt() -> void:
 	for point in asteroid_belt_points:
-		var asteroid_position := system_center + point
+		var asteroid_position := system_center + point.rotated(asteroid_belt_angle)
 		var size := 1.5 + fmod(absf(point.x + point.y), 3.0)
 		draw_circle(asteroid_position, size, Color("#7A716A"))
 
@@ -626,18 +804,14 @@ func draw_planets() -> void:
 	for planet in planets:
 		var planet_position: Vector2 = planet["position"]
 		var planet_radius: float = planet["radius"]
-		var planet_color: Color = planet["color"]
-		var planet_shadow_color: Color = planet["shadow_color"]
+		var planet_texture: Texture2D = planet["texture"]
+		var planet_draw_size: Vector2 = planet["draw_size"]
+		var draw_rect := Rect2(planet_position - planet_draw_size * 0.5, planet_draw_size)
 		
-		draw_circle(planet_position, planet_radius, planet_color)
-		draw_circle(
-			planet_position + Vector2(planet_radius * 0.28, planet_radius * 0.18),
-			planet_radius * 0.68,
-			Color(planet_shadow_color, 0.5)
-		)
-		
-		if planet["name"] == "Goliath":
-			draw_arc(planet_position, planet_radius * 1.45, -0.2, PI + 0.2, 120, Color(0.82, 0.76, 0.62, 0.55), 4.0)
+		if planet_texture != null:
+			draw_texture_rect(planet_texture, draw_rect, false)
+		else:
+			draw_circle(planet_position, planet_radius, Color("#7C8D92"))
 
 
 func draw_enemies() -> void:
@@ -652,17 +826,26 @@ func draw_enemies() -> void:
 
 
 func draw_enemy_icon(position: Vector2, color: Color, shadow_color: Color) -> void:
-	var points := PackedVector2Array([
-		position + Vector2(0.0, -enemy_icon_radius),
-		position + Vector2(enemy_icon_radius * 0.85, enemy_icon_radius * 0.7),
-		position,
-		position + Vector2(-enemy_icon_radius * 0.85, enemy_icon_radius * 0.7),
-	])
-	draw_colored_polygon(points, color)
+	var r := enemy_icon_radius
+	var outer_color := Color(color.r, color.g, color.b, 0.92)
+	var inner_color := Color(1.0, 0.55, 0.16, 0.95)
+	var dim_color := Color(shadow_color.r, shadow_color.g, shadow_color.b, 0.75)
+	
+	draw_arc(position, r * 1.15, deg_to_rad(18.0), deg_to_rad(102.0), 12, outer_color, 2.5)
+	draw_arc(position, r * 1.15, deg_to_rad(138.0), deg_to_rad(222.0), 12, outer_color, 2.5)
+	draw_arc(position, r * 1.15, deg_to_rad(258.0), deg_to_rad(342.0), 12, outer_color, 2.5)
+	
 	draw_polyline(PackedVector2Array([
-		position + Vector2(0.0, -enemy_icon_radius),
-		position + Vector2(enemy_icon_radius * 0.85, enemy_icon_radius * 0.7),
-		position + Vector2(0.0, enemy_icon_radius * 0.25),
-		position + Vector2(-enemy_icon_radius * 0.85, enemy_icon_radius * 0.7),
-		position + Vector2(0.0, -enemy_icon_radius),
-	]), shadow_color, 3.0)
+		position + Vector2(0.0, -r * 0.88),
+		position + Vector2(r * 0.72, 0.0),
+		position + Vector2(0.0, r * 0.88),
+		position + Vector2(-r * 0.72, 0.0),
+		position + Vector2(0.0, -r * 0.88),
+	]), outer_color, 2.0)
+	
+	draw_line(position + Vector2(-r * 1.45, 0.0), position + Vector2(-r * 0.82, 0.0), inner_color, 2.0)
+	draw_line(position + Vector2(r * 0.82, 0.0), position + Vector2(r * 1.45, 0.0), inner_color, 2.0)
+	draw_line(position + Vector2(0.0, -r * 1.45), position + Vector2(0.0, -r * 0.82), inner_color, 2.0)
+	draw_line(position + Vector2(0.0, r * 0.82), position + Vector2(0.0, r * 1.45), inner_color, 2.0)
+	
+	draw_circle(position, r * 0.2, dim_color)
