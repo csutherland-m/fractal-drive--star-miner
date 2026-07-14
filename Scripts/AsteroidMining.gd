@@ -107,8 +107,8 @@ enum BlockType {
 @export var move_speed: float = 200.0
 @export var ground_acceleration: float = 650.0
 @export var air_acceleration: float = 450.0
-@export var ground_deceleration: float = 850.0
-@export var air_deceleration: float = 550.0
+@export var ground_deceleration: float = 1275.0
+@export var air_deceleration: float = 825.0
 @export var upward_thrust: float = 1500.0
 @export var max_rise_speed: float = 360.0
 @export var player_collision_width: float = 42.0
@@ -186,8 +186,10 @@ var refuel_button: Button
 var return_to_starship_button: Button
 var return_to_starship_status_label: Label
 var fuel_processing_status_label: Label
+var treasure_processing_status_label: Label
 var upgrade_levels: Dictionary = {}
 var upgrade_definitions: Dictionary = {}
+var last_treasure_processing_result: String = ""
 var fuel_consumption_multiplier: float = 1.0
 var fuel_processing_active: bool = false
 var fuel_processing_remaining_seconds: float = 0.0
@@ -1214,7 +1216,6 @@ func is_variable_yield_ore_block(block_type: BlockType) -> bool:
 		BlockType.COPPER,
 		BlockType.IRON,
 		BlockType.GOLD,
-		BlockType.TREASURE,
 		BlockType.DIAMOND,
 		BlockType.WARPGEMS,
 		BlockType.BLACKHOLECRYSTALS,
@@ -1576,6 +1577,7 @@ func clear_shop_content() -> void:
 	return_to_starship_button = null
 	return_to_starship_status_label = null
 	fuel_processing_status_label = null
+	treasure_processing_status_label = null
 	clear_children(shop_content)
 
 
@@ -1773,6 +1775,20 @@ func show_market_view() -> void:
 	fuel_processing_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	fuel_processing_status_label.add_theme_font_size_override("font_size", 15)
 	process_column.add_child(fuel_processing_status_label)
+	
+	var treasure_process_button := add_shop_button(
+		process_column,
+		"Process Treasure\nRandom Upgrade +1 to +3 Levels",
+		Callable(self, "process_treasure_from_storage")
+	)
+	treasure_process_button.disabled = not can_process_treasure()
+	
+	treasure_processing_status_label = Label.new()
+	treasure_processing_status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	treasure_processing_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	treasure_processing_status_label.add_theme_font_size_override("font_size", 15)
+	treasure_processing_status_label.text = get_treasure_processing_status_text()
+	process_column.add_child(treasure_processing_status_label)
 	
 	add_shop_button(shop_content, "Back", Callable(self, "show_shop_main_view"))
 	update_shop_ui()
@@ -2028,6 +2044,9 @@ func update_shop_ui() -> void:
 	if fuel_processing_status_label != null:
 		fuel_processing_status_label.text = get_fuel_processing_status_text()
 	
+	if treasure_processing_status_label != null:
+		treasure_processing_status_label.text = get_treasure_processing_status_text()
+	
 	shop_status_label.text = (
 		"Credits: %d   Cargo: %d / %d   Cargo Hold: %d / %d units\nMining Fuel: %d / %d kg   Rocket Fuel: %d / %d tons   Starship Mining Fuel: %d / %d kg"
 		% [
@@ -2172,6 +2191,84 @@ func process_raw_fuel_from_storage() -> void:
 	refresh_lander_view_or_shop_ui()
 	update_hud()
 	return
+
+
+func process_treasure_from_storage() -> void:
+	if get_total_resource_count("Treasure") <= 0:
+		last_treasure_processing_result = "No Treasure available to process."
+		refresh_lander_view_or_shop_ui()
+		return
+	
+	var candidates := get_available_treasure_upgrade_candidates()
+	if candidates.is_empty():
+		last_treasure_processing_result = "All available upgrade systems are already maxed."
+		refresh_lander_view_or_shop_ui()
+		return
+	
+	var selected_candidate: Dictionary = candidates.pick_random()
+	var category_name: String = selected_candidate["category"]
+	var definition: Dictionary = selected_candidate["definition"]
+	var upgrade_id: String = definition["id"]
+	var current_level: int = int(upgrade_levels.get(upgrade_id, 0))
+	var max_level: int = int(definition.get("max_level", 10))
+	var target_level := mini(current_level + roll_treasure_upgrade_levels(), max_level)
+	
+	consume_resource("Treasure", 1)
+	for new_level in range(current_level + 1, target_level + 1):
+		upgrade_levels[upgrade_id] = new_level
+		apply_upgrade_effect(upgrade_id, new_level)
+	
+	last_treasure_processing_result = "%s — %s advanced from Lvl %d to Lvl %d (+%d)." % [
+		category_name,
+		String(definition["name"]),
+		current_level,
+		target_level,
+		target_level - current_level,
+	]
+	refresh_lander_view_or_shop_ui()
+	update_hud()
+
+
+func roll_treasure_upgrade_levels() -> int:
+	var roll := randf()
+	if roll < 0.05:
+		return 3
+	if roll < 0.20:
+		return 2
+	return 1
+
+
+func can_process_treasure() -> bool:
+	return (
+		get_total_resource_count("Treasure") > 0
+		and not get_available_treasure_upgrade_candidates().is_empty()
+	)
+
+
+func get_available_treasure_upgrade_candidates() -> Array[Dictionary]:
+	var candidates: Array[Dictionary] = []
+	for category_name in upgrade_definitions.keys():
+		var category_upgrades: Array = upgrade_definitions[category_name]
+		for definition in category_upgrades:
+			var upgrade_id: String = definition["id"]
+			var current_level: int = int(upgrade_levels.get(upgrade_id, 0))
+			var max_level: int = int(definition.get("max_level", 10))
+			if current_level < max_level:
+				candidates.append({
+					"category": String(category_name),
+					"definition": definition,
+				})
+	return candidates
+
+
+func get_treasure_processing_status_text() -> String:
+	if not last_treasure_processing_result.is_empty():
+		return last_treasure_processing_result
+	if get_total_resource_count("Treasure") <= 0:
+		return "Mine Treasure blocks to recover upgrade artifacts."
+	if get_available_treasure_upgrade_candidates().is_empty():
+		return "All available upgrade systems are already maxed."
+	return "Consumes 1 Treasure: 80% +1 level, 15% +2 levels, 5% +3 levels."
 
 
 func can_start_fuel_processing() -> bool:

@@ -11,10 +11,17 @@ This is the Codex working copy of the Godot project.
 - Planet visuals use placeholder sprite art from `Sprites/Planets/Placeholders/`.
 - Each generated local system guarantees at least one rocky planet and one gas giant, then fills the remaining planet slots from a random mix of rocky, ice, lava, and gas giant worlds.
 - Solar-system orbital motion is scaled by `ORBIT_SPEED_MULTIPLIER = 0.1` in `Scripts/StarSystemView.gd` so planets, enemies, the asteroid belt, and player orbital motion move at roughly one tenth of the previous speed.
+- Orbital visuals support up to 120 FPS and use subpixel positioning, keeping slow-moving planets, enemies, asteroids, and the player ship from stepping between whole pixels.
+- The star-system field renders at half scale for a 2x zoomed-out view, with antialiased enemy reticles and orbital geometry for smoother motion.
+- Planetary orbit rings are spaced 50% farther apart, and the outermost planet always orbits at least one full ring spacing beyond the asteroid belt.
+- Moving the mouse to a screen edge smoothly pans the star-system map, with diagonal scrolling at corners and bounded camera travel; HUD layers remain fixed in place.
+- The mouse wheel zooms toward the cursor from a 200-pixel-padded full-system view up to 175% of normal zoom; panning automatically recenters at the widest view.
+- Procedural systems can now include Crystal Worlds rich in luminous exotic minerals and Ferric Worlds built from iron-heavy industrial strata, each with dedicated generated planet art.
 - The player ship now spawns outside the asteroid belt and begins in orbit around the system center before the player chooses a destination.
 - Clicking a planet predicts the planet's future orbital position based on estimated transfer time, plots a curved orbital-style path to that intercept, freezes orbital motion on arrival, then enters the current planet mining scene.
 - Clicking the asteroid belt plots a curved approach and currently stops at a placeholder arrival message; the future asteroid-belt flight scene will branch from here.
 - The Star System View now includes strategic combat encounters: three visible raider HUD markers orbit the system, and one surprise ambush interrupts the first normal travel attempt.
+- Each visible raider independently rolls between orbiting the central star and appearing as a fixed escort marker above-right of a randomly selected planet; planetary markers follow their host without orbiting it and remain valid interception targets.
 - Enemy markers are custom-drawn hostile HUD reticles instead of plain red triangle placeholders.
 - Clicking a raider transfers the player ship to the enemy orbit first, then opens the combat encounter once the transfer completes.
 - Combat is resolved in a modal window with round-by-round rolls. The starter ship has 10,000 hull, enemies use 1,000 hull for normal raiders, damage is in the hundreds, and armor plus shields block roughly half of incoming raw damage.
@@ -69,6 +76,8 @@ This is the Codex working copy of the Godot project.
 - Starting two rows below the surface, dirt has a 2 percent chance to seed a small void pocket. Each pocket rolls 1-4 connected blocks, randomizes its shape from the starting dirt block, and remains hidden by fog of war until revealed.
 - Lode Stone starts appearing at 500m by replacing some normal rock blocks. It starts at a 1 percent conversion chance, scales upward with depth, cannot be mined yet, and is affected by gravity when unsupported. Landing impacts trigger a dust burst and short camera shake.
 - Normal ore blocks roll their yield when mined, giving 2-10 units of that resource. Raw fuel blocks still yield one raw fuel item for processing.
+- Treasure blocks yield exactly one Treasure. At the lander, each Treasure can improve a random non-maxed upgrade across any category, with an 80% chance of +1 level, 15% of +2, and 5% of +3, capped at its normal maximum.
+- The miner's ground and airborne horizontal deceleration are 50% stronger, producing a quicker stop when directional input is released.
 - Planet Core is a unique once-per-planet material. For current testing it appears once somewhere on the 1000m row; later this should be moved to the intended 5000m row.
 - Ore and raw fuel fill cargo. Starting miner cargo capacity is 100 units.
 - The lander Cargo Hold starts at 5,000 units, 50x the base miner capacity, and deposits stop when it is full.

@@ -5,7 +5,11 @@ const IceWorldTexture := preload("res://Sprites/Planets/Placeholders/ice_world.p
 const LavaWorldTexture := preload("res://Sprites/Planets/Placeholders/lava_world.png")
 const RingedGasGiantTexture := preload("res://Sprites/Planets/Placeholders/ringed_gas_giant.png")
 const RockyWorldTexture := preload("res://Sprites/Planets/Placeholders/rocky_world.png")
+const CrystalWorldTexture := preload("res://Sprites/Planets/Placeholders/crystal_world.png")
+const FerricWorldTexture := preload("res://Sprites/Planets/Placeholders/ferric_world.png")
 const ORBIT_SPEED_MULTIPLIER := 0.1
+const PLANET_ORBIT_START_RADIUS := 210.0
+const PLANET_ORBIT_SPACING := 232.5
 
 @onready var player_ship: Area2D = $PlayerShip
 @onready var ship_sprite: Sprite2D = $PlayerShip/ShipSprite
@@ -16,11 +20,14 @@ const ORBIT_SPEED_MULTIPLIER := 0.1
 @export var starship_side_texture_path: String = "res://Sprites/Vehicles/StarShipSideEdited.png"
 @export var zoomed_out_ship_scale: float = 0.18
 @export var travel_seconds: float = 2.2
+@export_range(0.25, 1.0, 0.05) var system_view_scale: float = 0.5
 @export var orbit_line_width: float = 2.0
 @export var asteroid_belt_inner_radius: float = 650.0
 @export var asteroid_belt_outer_radius: float = 780.0
 @export var asteroid_belt_point_count: int = 220
 @export var intentional_enemy_count: int = 3
+@export_range(0.0, 1.0, 0.05) var enemy_planet_marker_chance: float = 0.5
+@export var planet_enemy_marker_gap: float = 2.0
 @export var enemy_icon_radius: float = 18.0
 @export var player_outer_orbit_padding: float = 130.0
 @export var player_orbit_speed: float = 0.18
@@ -29,6 +36,13 @@ const ORBIT_SPEED_MULTIPLIER := 0.1
 @export var min_transfer_seconds: float = 1.2
 @export var max_transfer_seconds: float = 4.5
 @export var intercept_freeze_seconds: float = 0.45
+@export var edge_pan_margin: float = 28.0
+@export var edge_pan_speed: float = 620.0
+@export var edge_pan_acceleration: float = 2400.0
+@export var edge_pan_limit: Vector2 = Vector2(520.0, 360.0)
+@export var zoom_out_padding: float = 200.0
+@export var zoom_step: float = 0.1
+@export var max_map_zoom: float = 1.75
 
 var is_paused: bool = false
 var is_traveling: bool = false
@@ -69,6 +83,8 @@ var combat_round: int = 0
 var combat_log_lines: Array[String] = []
 var player_orbit_radius: float = 0.0
 var player_orbit_angle: float = 0.0
+var map_camera: Camera2D
+var edge_pan_velocity: Vector2 = Vector2.ZERO
 
 
 func _ready() -> void:
@@ -79,6 +95,7 @@ func _ready() -> void:
 	ship_sprite.texture = starship_side_texture
 	player_ship.scale = Vector2(zoomed_out_ship_scale, zoomed_out_ship_scale)
 	system_center = get_viewport_rect().size * 0.5
+	create_map_camera()
 	initialize_player_orbit()
 	player_combatant = CombatResolverScript.create_player_ship()
 	create_planets()
@@ -94,6 +111,8 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	if is_paused or is_combat_open:
 		return
+
+	update_edge_panning(delta)
 	
 	if not orbits_paused:
 		update_planets(delta)
@@ -108,8 +127,98 @@ func _process(delta: float) -> void:
 	queue_redraw()
 
 
+func create_map_camera() -> void:
+	map_camera = Camera2D.new()
+	map_camera.name = "MapCamera"
+	map_camera.position = system_center
+	add_child(map_camera)
+	map_camera.make_current()
+
+
+func update_edge_panning(delta: float) -> void:
+	var pan_direction := Vector2.ZERO
+	var mouse_position := get_viewport().get_mouse_position()
+	var viewport_rect := get_viewport().get_visible_rect()
+	
+	if get_window().has_focus() and viewport_rect.has_point(mouse_position):
+		if mouse_position.x <= edge_pan_margin:
+			pan_direction.x = -1.0
+		elif mouse_position.x >= viewport_rect.size.x - edge_pan_margin:
+			pan_direction.x = 1.0
+		
+		if mouse_position.y <= edge_pan_margin:
+			pan_direction.y = -1.0
+		elif mouse_position.y >= viewport_rect.size.y - edge_pan_margin:
+			pan_direction.y = 1.0
+	
+	var target_velocity := pan_direction.normalized() * edge_pan_speed
+	edge_pan_velocity = edge_pan_velocity.move_toward(
+		target_velocity,
+		edge_pan_acceleration * delta
+	)
+	
+	map_camera.position += edge_pan_velocity * delta
+	clamp_camera_to_pan_limits()
+
+
+func zoom_map_at_mouse(zoom_direction: float, mouse_position: Vector2) -> void:
+	var current_zoom := map_camera.zoom.x
+	var new_zoom := clampf(
+		current_zoom + zoom_direction * zoom_step,
+		get_minimum_map_zoom(),
+		max_map_zoom
+	)
+	if is_equal_approx(new_zoom, current_zoom):
+		return
+	
+	var viewport_center := get_viewport().get_visible_rect().size * 0.5
+	var mouse_from_center := mouse_position - viewport_center
+	var world_under_mouse := map_camera.position + mouse_from_center / current_zoom
+	map_camera.zoom = Vector2(new_zoom, new_zoom)
+	map_camera.position = world_under_mouse - mouse_from_center / new_zoom
+	clamp_camera_to_pan_limits()
+
+
+func get_minimum_map_zoom() -> float:
+	var outermost_ring_radius := scaled_system_size(asteroid_belt_outer_radius)
+	for planet in planets:
+		outermost_ring_radius = maxf(outermost_ring_radius, planet["orbit_radius"])
+	
+	var viewport_half_size := get_viewport().get_visible_rect().size * 0.5
+	var padded_half_size := viewport_half_size - Vector2.ONE * zoom_out_padding
+	var horizontal_zoom := maxf(padded_half_size.x, 1.0) / outermost_ring_radius
+	var vertical_zoom := maxf(padded_half_size.y, 1.0) / outermost_ring_radius
+	return clampf(minf(horizontal_zoom, vertical_zoom), 0.1, 1.0)
+
+
+func get_current_pan_limit() -> Vector2:
+	var current_zoom := map_camera.zoom.x
+	if current_zoom >= 1.0:
+		return edge_pan_limit
+	
+	var minimum_zoom := get_minimum_map_zoom()
+	var zoom_range := maxf(1.0 - minimum_zoom, 0.001)
+	var pan_fraction := clampf((current_zoom - minimum_zoom) / zoom_range, 0.0, 1.0)
+	return edge_pan_limit * pan_fraction
+
+
+func clamp_camera_to_pan_limits() -> void:
+	var pan_limit := get_current_pan_limit()
+	var camera_offset := map_camera.position - system_center
+	camera_offset.x = clampf(camera_offset.x, -pan_limit.x, pan_limit.x)
+	camera_offset.y = clampf(camera_offset.y, -pan_limit.y, pan_limit.y)
+	map_camera.position = system_center + camera_offset
+	update_starfield_camera_compensation()
+
+
+func update_starfield_camera_compensation() -> void:
+	var inverse_zoom := 1.0 / map_camera.zoom.x
+	starfield.scale = Vector2(inverse_zoom, inverse_zoom)
+	starfield.position = map_camera.position - system_center * inverse_zoom
+
+
 func initialize_player_orbit() -> void:
-	player_orbit_radius = asteroid_belt_outer_radius + player_outer_orbit_padding
+	player_orbit_radius = scaled_system_size(asteroid_belt_outer_radius + player_outer_orbit_padding)
 	player_orbit_angle = PI * 0.5
 	player_ship.global_position = get_position_on_orbit(player_orbit_radius, player_orbit_angle)
 	update_ship_visual(get_orbit_tangent(player_orbit_angle))
@@ -125,6 +234,8 @@ func create_planets() -> void:
 		get_planet_template("lava"),
 		get_planet_template("rocky"),
 		get_planet_template("gas_giant"),
+		get_planet_template("crystal"),
+		get_planet_template("ferric"),
 	]
 	var extra_planet_count := randi_range(2, 3)
 	
@@ -136,10 +247,28 @@ func create_planets() -> void:
 	
 	for i in selected_templates.size():
 		planets.append(create_planet_from_template(selected_templates[i], i))
+	
+	push_outermost_planet_beyond_asteroid_belt()
 
 
 func get_planet_template(planet_type: String) -> Dictionary:
 	match planet_type:
+		"crystal":
+			return {
+				"name_options": ["Prismara", "Veyl", "Asterite"],
+				"type": "Crystal World",
+				"texture": CrystalWorldTexture,
+				"radius": 40.0,
+				"draw_size": Vector2(90.0, 90.0),
+			}
+		"ferric":
+			return {
+				"name_options": ["Ferrum", "Anvil", "Corten"],
+				"type": "Ferric World",
+				"texture": FerricWorldTexture,
+				"radius": 44.0,
+				"draw_size": Vector2(96.0, 96.0),
+			}
 		"gas_giant":
 			return {
 				"name_options": ["Aurelia", "Goliath", "Caelus"],
@@ -175,7 +304,9 @@ func get_planet_template(planet_type: String) -> Dictionary:
 
 
 func create_planet_from_template(template: Dictionary, orbit_index: int) -> Dictionary:
-	var orbit_radius := 210.0 + float(orbit_index) * 155.0
+	var orbit_radius := scaled_system_size(
+		PLANET_ORBIT_START_RADIUS + float(orbit_index) * PLANET_ORBIT_SPACING
+	)
 	var orbit_speed := maxf(0.08, 0.4 - float(orbit_index) * 0.065)
 	var start_angle := randf_range(0.0, TAU)
 	var name_options: Array = template["name_options"]
@@ -183,11 +314,11 @@ func create_planet_from_template(template: Dictionary, orbit_index: int) -> Dict
 		name_options.pick_random(),
 		template["type"],
 		template["texture"],
-		template["draw_size"],
+		template["draw_size"] * system_view_scale,
 		orbit_radius,
 		orbit_speed,
 		start_angle,
-		template["radius"]
+		scaled_system_size(template["radius"])
 	)
 
 
@@ -214,28 +345,76 @@ func create_planet(
 	}
 
 
+func push_outermost_planet_beyond_asteroid_belt() -> void:
+	if planets.is_empty():
+		return
+	
+	var outermost_planet: Dictionary = planets[-1]
+	var minimum_outer_orbit := scaled_system_size(
+		asteroid_belt_outer_radius + PLANET_ORBIT_SPACING
+	)
+	outermost_planet["orbit_radius"] = maxf(
+		outermost_planet["orbit_radius"],
+		minimum_outer_orbit
+	)
+	outermost_planet["position"] = get_position_on_orbit(
+		outermost_planet["orbit_radius"],
+		outermost_planet["angle"]
+	)
+
+
 func create_asteroid_belt() -> void:
 	asteroid_belt_points.clear()
 	for i in asteroid_belt_point_count:
 		var angle := (float(i) / float(asteroid_belt_point_count)) * TAU + randf_range(-0.018, 0.018)
-		var radius := randf_range(asteroid_belt_inner_radius, asteroid_belt_outer_radius)
+		var radius := randf_range(
+			scaled_system_size(asteroid_belt_inner_radius),
+			scaled_system_size(asteroid_belt_outer_radius)
+		)
 		asteroid_belt_points.append(Vector2.RIGHT.rotated(angle) * radius)
 
 
 func create_enemies() -> void:
 	enemies.clear()
 	for i in intentional_enemy_count:
-		var orbit_radius := 280.0 + float(i) * 180.0
-		var angle := 0.8 + float(i) * 1.9
-		enemies.append({
+		var tracks_planet := not planets.is_empty() and randf() < enemy_planet_marker_chance
+		var host_planet_index := -1
+		var orbit_radius := scaled_system_size(280.0 + float(i) * 180.0)
+		var orbit_speed := 0.13 + float(i) * 0.035
+		var orbit_center := system_center
+		var angle := randf_range(0.0, TAU)
+		var planet_marker_offset := Vector2.ZERO
+		
+		if tracks_planet:
+			host_planet_index = randi_range(0, planets.size() - 1)
+			orbit_center = planets[host_planet_index]["position"]
+			planet_marker_offset = get_planet_enemy_marker_offset(host_planet_index)
+			orbit_radius = 0.0
+			orbit_speed = 0.0
+			angle = 0.0
+		
+		var enemy := {
 			"name": "Raider %d" % (i + 1),
+			"movement_type": "planet_marker" if tracks_planet else "star_orbit",
+			"host_planet_index": host_planet_index,
+			"planet_marker_offset": planet_marker_offset,
 			"orbit_radius": orbit_radius,
-			"orbit_speed": 0.13 + float(i) * 0.035,
+			"orbit_speed": orbit_speed,
 			"angle": angle,
-			"position": system_center + Vector2.RIGHT.rotated(angle) * orbit_radius,
+			"position": orbit_center + (planet_marker_offset if tracks_planet else Vector2.RIGHT.rotated(angle) * orbit_radius),
 			"defeated": false,
 			"is_surprise": false,
-		})
+		}
+		enemies.append(enemy)
+
+
+func get_planet_enemy_marker_offset(host_planet_index: int) -> Vector2:
+	var host_planet: Dictionary = planets[host_planet_index]
+	var draw_size: Vector2 = host_planet["draw_size"]
+	var planet_visual_radius := maxf(draw_size.x, draw_size.y) * 0.5
+	var marker_visual_radius := scaled_system_size(enemy_icon_radius) * 1.15
+	var center_distance := planet_visual_radius + marker_visual_radius + planet_enemy_marker_gap
+	return Vector2(1.0, -1.0).normalized() * center_distance
 
 
 func create_route_line() -> void:
@@ -353,8 +532,23 @@ func update_enemies(delta: float) -> void:
 		if enemy["defeated"]:
 			continue
 		
+		if enemy.get("movement_type", "star_orbit") == "planet_marker":
+			enemy["position"] = get_enemy_host_planet_position(enemy) + enemy["planet_marker_offset"]
+			continue
+		
 		enemy["angle"] += enemy["orbit_speed"] * ORBIT_SPEED_MULTIPLIER * delta
 		enemy["position"] = get_position_on_orbit(enemy["orbit_radius"], enemy["angle"])
+
+
+func get_enemy_host_planet_position(enemy: Dictionary, future_seconds: float = 0.0) -> Vector2:
+	var host_planet_index := int(enemy.get("host_planet_index", -1))
+	if host_planet_index < 0 or host_planet_index >= planets.size():
+		return system_center
+	
+	var host_planet: Dictionary = planets[host_planet_index]
+	var host_angle: float = host_planet["angle"]
+	host_angle += host_planet["orbit_speed"] * ORBIT_SPEED_MULTIPLIER * future_seconds
+	return get_position_on_orbit(host_planet["orbit_radius"], host_angle)
 
 
 func update_asteroid_belt(delta: float) -> void:
@@ -369,6 +563,10 @@ func update_player_orbit(delta: float) -> void:
 
 func get_position_on_orbit(orbit_radius: float, orbit_angle: float) -> Vector2:
 	return system_center + Vector2.RIGHT.rotated(orbit_angle) * orbit_radius
+
+
+func scaled_system_size(value: float) -> float:
+	return value * system_view_scale
 
 
 func get_orbit_tangent(orbit_angle: float) -> Vector2:
@@ -443,8 +641,14 @@ func predict_future_orbit_position(target: Dictionary, start_position: Vector2) 
 	var estimated_time := get_transfer_duration(start_position, predicted_position)
 	
 	for i in 3:
-		var future_angle: float = target["angle"] + target["orbit_speed"] * ORBIT_SPEED_MULTIPLIER * estimated_time
-		predicted_position = get_position_on_orbit(target["orbit_radius"], future_angle)
+		if target.get("movement_type", "star_orbit") == "planet_marker":
+			predicted_position = (
+				get_enemy_host_planet_position(target, estimated_time)
+				+ target["planet_marker_offset"]
+			)
+		else:
+			var future_angle: float = target["angle"] + target["orbit_speed"] * ORBIT_SPEED_MULTIPLIER * estimated_time
+			predicted_position = get_position_on_orbit(target["orbit_radius"], future_angle)
 		estimated_time = get_transfer_duration(start_position, predicted_position)
 	
 	return predicted_position
@@ -719,7 +923,20 @@ func _unhandled_input(event: InputEvent) -> void:
 		toggle_pause_menu()
 		return
 	
-	if is_paused or is_traveling or is_combat_open or orbits_paused:
+	if is_paused or is_combat_open:
+		return
+	
+	if event is InputEventMouseButton and event.pressed:
+		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+			zoom_map_at_mouse(1.0, event.position)
+			get_viewport().set_input_as_handled()
+			return
+		if event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			zoom_map_at_mouse(-1.0, event.position)
+			get_viewport().set_input_as_handled()
+			return
+	
+	if is_traveling or orbits_paused:
 		return
 	
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
@@ -732,7 +949,7 @@ func handle_click(click_position: Vector2) -> void:
 		if enemy["defeated"]:
 			continue
 		
-		if click_position.distance_to(enemy["position"]) <= enemy_icon_radius + 12.0:
+		if click_position.distance_to(enemy["position"]) <= scaled_system_size(enemy_icon_radius) + 12.0:
 			begin_enemy_orbit_transfer(i)
 			return
 	
@@ -742,7 +959,10 @@ func handle_click(click_position: Vector2) -> void:
 			return
 	
 	var distance_from_star := click_position.distance_to(system_center)
-	if distance_from_star >= asteroid_belt_inner_radius and distance_from_star <= asteroid_belt_outer_radius:
+	if (
+		distance_from_star >= scaled_system_size(asteroid_belt_inner_radius)
+		and distance_from_star <= scaled_system_size(asteroid_belt_outer_radius)
+	):
 		begin_travel_to("asteroid_belt", "Asteroid Belt", click_position)
 
 
@@ -775,29 +995,30 @@ func _draw() -> void:
 
 func draw_orbits() -> void:
 	for planet in planets:
-		draw_arc(system_center, planet["orbit_radius"], 0.0, TAU, 180, Color(0.32, 0.48, 0.58, 0.28), orbit_line_width)
+		draw_arc(system_center, planet["orbit_radius"], 0.0, TAU, 180, Color(0.32, 0.48, 0.58, 0.28), scaled_system_size(orbit_line_width), true)
 	
 	draw_arc(
 		system_center,
-		(asteroid_belt_inner_radius + asteroid_belt_outer_radius) * 0.5,
+		scaled_system_size((asteroid_belt_inner_radius + asteroid_belt_outer_radius) * 0.5),
 		0.0,
 		TAU,
 		220,
 		Color(0.48, 0.45, 0.42, 0.18),
-		asteroid_belt_outer_radius - asteroid_belt_inner_radius
+		scaled_system_size(asteroid_belt_outer_radius - asteroid_belt_inner_radius),
+		true
 	)
 
 
 func draw_star() -> void:
-	draw_circle(system_center, 58.0, Color("#FFD76A"))
-	draw_circle(system_center, 34.0, Color("#FFF1A3"))
+	draw_circle(system_center, scaled_system_size(58.0), Color("#FFD76A"), true, -1.0, true)
+	draw_circle(system_center, scaled_system_size(34.0), Color("#FFF1A3"), true, -1.0, true)
 
 
 func draw_asteroid_belt() -> void:
 	for point in asteroid_belt_points:
 		var asteroid_position := system_center + point.rotated(asteroid_belt_angle)
-		var size := 1.5 + fmod(absf(point.x + point.y), 3.0)
-		draw_circle(asteroid_position, size, Color("#7A716A"))
+		var size := scaled_system_size(1.5 + fmod(absf(point.x + point.y), 3.0))
+		draw_circle(asteroid_position, size, Color("#7A716A"), true, -1.0, true)
 
 
 func draw_planets() -> void:
@@ -826,14 +1047,14 @@ func draw_enemies() -> void:
 
 
 func draw_enemy_icon(position: Vector2, color: Color, shadow_color: Color) -> void:
-	var r := enemy_icon_radius
+	var r := scaled_system_size(enemy_icon_radius)
 	var outer_color := Color(color.r, color.g, color.b, 0.92)
 	var inner_color := Color(1.0, 0.55, 0.16, 0.95)
 	var dim_color := Color(shadow_color.r, shadow_color.g, shadow_color.b, 0.75)
 	
-	draw_arc(position, r * 1.15, deg_to_rad(18.0), deg_to_rad(102.0), 12, outer_color, 2.5)
-	draw_arc(position, r * 1.15, deg_to_rad(138.0), deg_to_rad(222.0), 12, outer_color, 2.5)
-	draw_arc(position, r * 1.15, deg_to_rad(258.0), deg_to_rad(342.0), 12, outer_color, 2.5)
+	draw_arc(position, r * 1.15, deg_to_rad(18.0), deg_to_rad(102.0), 12, outer_color, 1.5, true)
+	draw_arc(position, r * 1.15, deg_to_rad(138.0), deg_to_rad(222.0), 12, outer_color, 1.5, true)
+	draw_arc(position, r * 1.15, deg_to_rad(258.0), deg_to_rad(342.0), 12, outer_color, 1.5, true)
 	
 	draw_polyline(PackedVector2Array([
 		position + Vector2(0.0, -r * 0.88),
@@ -841,11 +1062,11 @@ func draw_enemy_icon(position: Vector2, color: Color, shadow_color: Color) -> vo
 		position + Vector2(0.0, r * 0.88),
 		position + Vector2(-r * 0.72, 0.0),
 		position + Vector2(0.0, -r * 0.88),
-	]), outer_color, 2.0)
+	]), outer_color, 1.25, true)
 	
-	draw_line(position + Vector2(-r * 1.45, 0.0), position + Vector2(-r * 0.82, 0.0), inner_color, 2.0)
-	draw_line(position + Vector2(r * 0.82, 0.0), position + Vector2(r * 1.45, 0.0), inner_color, 2.0)
-	draw_line(position + Vector2(0.0, -r * 1.45), position + Vector2(0.0, -r * 0.82), inner_color, 2.0)
-	draw_line(position + Vector2(0.0, r * 0.82), position + Vector2(0.0, r * 1.45), inner_color, 2.0)
+	draw_line(position + Vector2(-r * 1.45, 0.0), position + Vector2(-r * 0.82, 0.0), inner_color, 1.25, true)
+	draw_line(position + Vector2(r * 0.82, 0.0), position + Vector2(r * 1.45, 0.0), inner_color, 1.25, true)
+	draw_line(position + Vector2(0.0, -r * 1.45), position + Vector2(0.0, -r * 0.82), inner_color, 1.25, true)
+	draw_line(position + Vector2(0.0, r * 0.82), position + Vector2(0.0, r * 1.45), inner_color, 1.25, true)
 	
-	draw_circle(position, r * 0.2, dim_color)
+	draw_circle(position, r * 0.2, dim_color, true, -1.0, true)
