@@ -85,10 +85,11 @@ var player_orbit_radius: float = 0.0
 var player_orbit_angle: float = 0.0
 var map_camera: Camera2D
 var edge_pan_velocity: Vector2 = Vector2.ZERO
+var system_generation_rng := RandomNumberGenerator.new()
 
 
 func _ready() -> void:
-	randomize()
+	system_generation_rng.seed = SeedManager.get_current_system_seed()
 	pause_menu.resume_requested.connect(_on_resume_pressed)
 	pause_menu.quit_requested.connect(_on_quit_pressed)
 	starship_side_texture = load(starship_side_texture_path) as Texture2D
@@ -237,12 +238,12 @@ func create_planets() -> void:
 		get_planet_template("crystal"),
 		get_planet_template("ferric"),
 	]
-	var extra_planet_count := randi_range(2, 3)
+	var extra_planet_count := system_generation_rng.randi_range(2, 3)
 	
 	for i in extra_planet_count:
-		selected_templates.append(random_templates.pick_random())
+		selected_templates.append(pick_system_generation_item(random_templates))
 	
-	selected_templates.shuffle()
+	shuffle_system_generation_array(selected_templates)
 	planets.clear()
 	
 	for i in selected_templates.size():
@@ -308,10 +309,10 @@ func create_planet_from_template(template: Dictionary, orbit_index: int) -> Dict
 		PLANET_ORBIT_START_RADIUS + float(orbit_index) * PLANET_ORBIT_SPACING
 	)
 	var orbit_speed := maxf(0.08, 0.4 - float(orbit_index) * 0.065)
-	var start_angle := randf_range(0.0, TAU)
+	var start_angle := system_generation_rng.randf_range(0.0, TAU)
 	var name_options: Array = template["name_options"]
 	return create_planet(
-		name_options.pick_random(),
+		pick_system_generation_item(name_options),
 		template["type"],
 		template["texture"],
 		template["draw_size"] * system_view_scale,
@@ -366,8 +367,8 @@ func push_outermost_planet_beyond_asteroid_belt() -> void:
 func create_asteroid_belt() -> void:
 	asteroid_belt_points.clear()
 	for i in asteroid_belt_point_count:
-		var angle := (float(i) / float(asteroid_belt_point_count)) * TAU + randf_range(-0.018, 0.018)
-		var radius := randf_range(
+		var angle := (float(i) / float(asteroid_belt_point_count)) * TAU + system_generation_rng.randf_range(-0.018, 0.018)
+		var radius := system_generation_rng.randf_range(
 			scaled_system_size(asteroid_belt_inner_radius),
 			scaled_system_size(asteroid_belt_outer_radius)
 		)
@@ -377,16 +378,16 @@ func create_asteroid_belt() -> void:
 func create_enemies() -> void:
 	enemies.clear()
 	for i in intentional_enemy_count:
-		var tracks_planet := not planets.is_empty() and randf() < enemy_planet_marker_chance
+		var tracks_planet := not planets.is_empty() and system_generation_rng.randf() < enemy_planet_marker_chance
 		var host_planet_index := -1
 		var orbit_radius := scaled_system_size(280.0 + float(i) * 180.0)
 		var orbit_speed := 0.13 + float(i) * 0.035
 		var orbit_center := system_center
-		var angle := randf_range(0.0, TAU)
+		var angle := system_generation_rng.randf_range(0.0, TAU)
 		var planet_marker_offset := Vector2.ZERO
 		
 		if tracks_planet:
-			host_planet_index = randi_range(0, planets.size() - 1)
+			host_planet_index = system_generation_rng.randi_range(0, planets.size() - 1)
 			orbit_center = planets[host_planet_index]["position"]
 			planet_marker_offset = get_planet_enemy_marker_offset(host_planet_index)
 			orbit_radius = 0.0
@@ -406,6 +407,18 @@ func create_enemies() -> void:
 			"is_surprise": false,
 		}
 		enemies.append(enemy)
+
+
+func pick_system_generation_item(options: Array) -> Variant:
+	return options[system_generation_rng.randi_range(0, options.size() - 1)]
+
+
+func shuffle_system_generation_array(values: Array) -> void:
+	for index in range(values.size() - 1, 0, -1):
+		var swap_index := system_generation_rng.randi_range(0, index)
+		var swap_value = values[index]
+		values[index] = values[swap_index]
+		values[swap_index] = swap_value
 
 
 func get_planet_enemy_marker_offset(host_planet_index: int) -> Vector2:
@@ -448,7 +461,12 @@ func create_ui() -> void:
 	add_child(ui_layer)
 	
 	title_label = Label.new()
-	title_label.text = "Star System View"
+	var current_system := SeedManager.get_current_system()
+	title_label.text = "%s — Depth %d / Difficulty %d" % [
+		current_system.get("display_name", "Star System"),
+		current_system.get("path_depth", 0),
+		current_system.get("difficulty_tier", 1),
+	]
 	title_label.position = Vector2(28.0, 22.0)
 	title_label.add_theme_font_size_override("font_size", 30)
 	ui_layer.add_child(title_label)
@@ -458,8 +476,23 @@ func create_ui() -> void:
 	status_label.position = Vector2(28.0, 66.0)
 	status_label.add_theme_font_size_override("font_size", 18)
 	ui_layer.add_child(status_label)
+	update_galaxy_foundation_status()
 	
 	create_combat_panel(ui_layer)
+
+
+func update_galaxy_foundation_status() -> void:
+	if SeedManager.starting_scenario_state != SeedManager.StartingScenarioState.GALAXY_MAP_UNLOCKED:
+		return
+
+	var next_names: Array[String] = []
+	for system_data in SeedManager.get_available_next_systems():
+		next_names.append(system_data["display_name"])
+	status_label.text = (
+		"Galaxy route foundation unlocked. Available next systems: %s. "
+		+ "Route-selection UI is the next phase."
+	) % ", ".join(next_names)
+	SeedManager.print_available_next_systems()
 
 
 func create_combat_panel(ui_layer: CanvasLayer) -> void:

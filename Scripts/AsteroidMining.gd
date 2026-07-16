@@ -2,6 +2,7 @@ extends Node2D
 
 const FogOverlayScript := preload("res://Scripts/FogOverlay.gd")
 const MiningEffectsScript := preload("res://Scripts/MiningEffects.gd")
+const DeveloperTestPanelScript := preload("res://Scripts/DeveloperTestPanel.gd")
 const ResourceTileTexture := preload("res://Sprites/TileSets/MiningTilesVariantsDugDirt64.png")
 const GaugeClusterTexture := preload("res://Sprites/UI/gauge_cluster_concept.png")
 const FuelDepotTexture := preload("res://Sprites/UI/fuel_depot_placeholder.png")
@@ -64,9 +65,11 @@ enum BlockType {
 @export var depth_distribution_full_row: int = 240
 @export var side_fog_padding_pixels: float = 300.0
 @export var depth_meters_per_row: int = 10
-@export var dirt_chocolate_gradient_depth_meters: int = 1000
-@export var dirt_red_gradient_depth_meters: int = 3000
-@export var dirt_depth_tint_alpha: float = 0.38
+@export var depth_darkening_enabled: bool = true
+@export_range(0.0, 1.0, 0.01) var surface_brightness: float = 1.0
+@export_range(0.0, 1.0, 0.01) var deep_brightness: float = 0.45
+@export_range(0.0, 1.0, 0.01) var depth_gradient_start: float = 0.0
+@export_range(0.0, 1.0, 0.01) var depth_gradient_end: float = 1.0
 @export var planet_core_test_depth_meters: int = 1000
 @export var planet_core_future_depth_meters: int = 5000
 @export var lodestone_start_depth_meters: int = 500
@@ -149,7 +152,6 @@ var is_shop_reentry_locked: bool = false
 var is_game_over: bool = false
 var is_arrival_countdown_active: bool = false
 var is_on_ground: bool = false
-var is_god_mode_active: bool = false
 var player_velocity: Vector2 = Vector2.ZERO
 var last_mine_direction: Vector2i = Vector2i.DOWN
 var player_animation_time: float = 0.0
@@ -189,6 +191,8 @@ var fuel_processing_status_label: Label
 var treasure_processing_status_label: Label
 var upgrade_levels: Dictionary = {}
 var upgrade_definitions: Dictionary = {}
+var upgrade_stat_rules: Dictionary = {}
+var base_upgrade_stats: Dictionary = {}
 var last_treasure_processing_result: String = ""
 var fuel_consumption_multiplier: float = 1.0
 var fuel_processing_active: bool = false
@@ -200,10 +204,12 @@ var planned_filling_stations: Array[Dictionary] = []
 var planned_pipe_connections: Array[Dictionary] = []
 var game_over_label: Label
 var countdown_label: Label
+var cargo_hauler_dialog: AcceptDialog
+var developer_test_panel: Node
 var mining_camera: Camera2D
 var mining_effects: Node2D
 var fog_overlay: Node2D
-var dirt_depth_tint_overlay: Node2D
+var terrain_depth_darkening_overlay: Node2D
 var mining_blink_overlay: Polygon2D
 var mining_progress_overlay: Polygon2D
 var revealed_cells: Dictionary = {}
@@ -217,9 +223,11 @@ var lodestone_fall_distance: float = 0.0
 var has_copper_drill_upgrade: bool = false
 var has_sensor_upgrade: bool = false
 var generated_row_count: int = 0
+var planet_generation_rng := RandomNumberGenerator.new()
 
 
 func _ready() -> void:
+	SeedManager.enter_starting_planet()
 	configure_crisp_canvas_items()
 	pause_menu.resume_requested.connect(_on_resume_pressed)
 	pause_menu.quit_requested.connect(_on_quit_pressed)
@@ -232,21 +240,36 @@ func _ready() -> void:
 	generate_mine_tiles()
 	position_player_in_sky()
 	create_surface_shop()
-	create_dirt_depth_tint_overlay()
+	create_terrain_depth_darkening_overlay()
 	create_mining_camera()
 	create_mining_effects()
 	create_fog_overlay()
 	create_mining_overlays()
 	create_shop_ui()
+	create_developer_test_panel()
 	create_game_over_ui()
 	create_hud()
 	update_revealed_cells()
 	update_camera()
 	update_hud()
+	show_cargo_hauler_intro_if_needed()
 
 
 func _process(delta: float) -> void:
 	update_fuel_processing(delta)
+
+
+func show_cargo_hauler_intro_if_needed() -> void:
+	if not SeedManager.should_show_cargo_hauler_intro():
+		return
+
+	SeedManager.mark_cargo_hauler_intro_shown()
+	cargo_hauler_dialog = AcceptDialog.new()
+	cargo_hauler_dialog.title = "Incoming Transmission: Cargo Hauler"
+	cargo_hauler_dialog.dialog_text = SeedManager.get_cargo_hauler_intro_text()
+	cargo_hauler_dialog.get_ok_button().text = "Begin Mining"
+	add_child(cargo_hauler_dialog)
+	cargo_hauler_dialog.popup_centered(Vector2i(760, 420))
 
 
 func initialize_planetary_infrastructure_hooks() -> void:
@@ -281,8 +304,6 @@ func _physics_process(delta: float) -> void:
 	update_player_visual(delta)
 	update_revealed_cells()
 	update_mining_overlays()
-	if dirt_depth_tint_overlay != null:
-		dirt_depth_tint_overlay.queue_redraw()
 	queue_redraw()
 
 
@@ -295,7 +316,7 @@ func generate_mine_tiles() -> void:
 	revealed_cells.clear()
 	planet_core_cell = Vector2i(-1, -1)
 	generated_row_count = 0
-	randomize()
+	planet_generation_rng.seed = SeedManager.starting_planet_seed
 	
 	generate_rows_until(grid_height)
 
@@ -314,7 +335,7 @@ func generate_rows_until(target_row_count: int) -> void:
 			background_tiles.set_cell(
 				cell_position,
 				tile_source_id,
-				get_dug_dirt_tile_coords()
+				get_dug_dirt_tile_coords(cell_position)
 			)
 			
 			var block_type := choose_block_type_for_depth(y)
@@ -324,7 +345,7 @@ func generate_rows_until(target_row_count: int) -> void:
 				block_type = BlockType.LODESTONE
 			elif block_type == BlockType.DIRT and should_make_dirt_cell_void(cell_position):
 				block_type = BlockType.EMPTY
-			var tile_coords := get_tile_coords_for_block_type(block_type)
+			var tile_coords := get_tile_coords_for_block_type(block_type, cell_position)
 			
 			if block_type != BlockType.EMPTY:
 				visual_mine_tiles.set_cell(
@@ -335,15 +356,15 @@ func generate_rows_until(target_row_count: int) -> void:
 				block_types_by_cell[cell_position] = block_type
 	
 	generated_row_count = target_row_count
-	if dirt_depth_tint_overlay != null:
-		dirt_depth_tint_overlay.queue_redraw()
+	if terrain_depth_darkening_overlay != null:
+		terrain_depth_darkening_overlay.queue_redraw()
 
 
 func should_place_planet_core_at_cell(cell_position: Vector2i) -> bool:
 	if planet_core_cell == Vector2i(-1, -1):
 		var core_row := get_planet_core_test_row()
 		if cell_position.y == core_row:
-			planet_core_cell = Vector2i(randi_range(0, grid_width - 1), core_row)
+			planet_core_cell = Vector2i(planet_generation_rng.randi_range(0, grid_width - 1), core_row)
 	
 	return cell_position == planet_core_cell
 
@@ -361,7 +382,7 @@ func should_convert_rock_to_lodestone(row: int) -> bool:
 	if depth_meters < lodestone_start_depth_meters:
 		return false
 	
-	return randf() < get_lodestone_chance_for_depth(depth_meters)
+	return planet_generation_rng.randf() < get_lodestone_chance_for_depth(depth_meters)
 
 
 func get_lodestone_chance_for_depth(depth_meters: int) -> float:
@@ -382,7 +403,7 @@ func should_make_dirt_cell_void(cell_position: Vector2i) -> bool:
 	if cell_position.y < get_first_ground_row() + dirt_void_start_depth_rows:
 		return false
 	
-	if randf() >= dirt_void_chance:
+	if planet_generation_rng.randf() >= dirt_void_chance:
 		return false
 	
 	create_dirt_void_from_cell(cell_position)
@@ -390,7 +411,7 @@ func should_make_dirt_cell_void(cell_position: Vector2i) -> bool:
 
 
 func create_dirt_void_from_cell(start_cell: Vector2i) -> void:
-	var target_size := randi_range(
+	var target_size := planet_generation_rng.randi_range(
 		maxi(dirt_void_min_size, 1),
 		maxi(dirt_void_max_size, dirt_void_min_size)
 	)
@@ -399,7 +420,7 @@ func create_dirt_void_from_cell(start_cell: Vector2i) -> void:
 	planned_void_cells[start_cell] = true
 	
 	while void_cells.size() < target_size and not frontier.is_empty():
-		var source_cell: Vector2i = frontier.pick_random()
+		var source_cell: Vector2i = frontier[planet_generation_rng.randi_range(0, frontier.size() - 1)]
 		var neighbor_options := get_shuffled_void_neighbor_cells(source_cell)
 		var expanded := false
 		
@@ -425,7 +446,11 @@ func get_shuffled_void_neighbor_cells(cell: Vector2i) -> Array[Vector2i]:
 		cell + Vector2i.LEFT,
 		cell + Vector2i.UP,
 	]
-	neighbors.shuffle()
+	for index in range(neighbors.size() - 1, 0, -1):
+		var swap_index := planet_generation_rng.randi_range(0, index)
+		var swap_value := neighbors[index]
+		neighbors[index] = neighbors[swap_index]
+		neighbors[swap_index] = swap_value
 	return neighbors
 
 
@@ -455,7 +480,7 @@ func carve_existing_dirt_void_cell(cell: Vector2i) -> void:
 
 func choose_block_type_for_depth(y: int) -> BlockType:
 	var depth_ratio: float = minf(float(y) / float(depth_distribution_full_row), 1.0)
-	var roll := randf()
+	var roll := planet_generation_rng.randf()
 	
 	if depth_ratio < 0.30:
 		if roll < 0.84475:
@@ -504,45 +529,68 @@ func choose_block_type_for_depth(y: int) -> BlockType:
 			return BlockType.BLACKHOLECRYSTALS
 
 
-func get_tile_coords_for_block_type(block_type: BlockType) -> Vector2i:
+func get_tile_coords_for_block_type(block_type: BlockType, cell_position: Vector2i) -> Vector2i:
 	match block_type:
 		BlockType.DIRT:
-			return pick_tile_coords(dirt_tiles, Vector2i(0, 0))
+			return pick_seeded_tile_coords(dirt_tiles, Vector2i(0, 0), cell_position, "dirt")
 		BlockType.ROCK:
-			return pick_tile_coords(rock_tiles, Vector2i(4, 0))
+			return pick_seeded_tile_coords(rock_tiles, Vector2i(4, 0), cell_position, "rock")
 		BlockType.LODESTONE:
-			return pick_tile_coords(rock_tiles, Vector2i(4, 0))
+			return pick_seeded_tile_coords(rock_tiles, Vector2i(4, 0), cell_position, "lodestone")
 		BlockType.COPPER:
-			return pick_tile_coords(copper_tiles, Vector2i(4, 1))
+			return pick_seeded_tile_coords(copper_tiles, Vector2i(4, 1), cell_position, "copper")
 		BlockType.RAWFUEL:
-			return pick_tile_coords(rawfuel_tiles, Vector2i(0, 1))
+			return pick_seeded_tile_coords(rawfuel_tiles, Vector2i(0, 1), cell_position, "raw_fuel")
 		BlockType.IRON:
-			return pick_tile_coords(iron_tiles, Vector2i(0, 2))
+			return pick_seeded_tile_coords(iron_tiles, Vector2i(0, 2), cell_position, "iron")
 		BlockType.GOLD:
-			return pick_tile_coords(gold_tiles, Vector2i(3, 2))
+			return pick_seeded_tile_coords(gold_tiles, Vector2i(3, 2), cell_position, "gold")
 		BlockType.TREASURE:
-			return pick_tile_coords(treasure_tiles, Vector2i(7, 1))
+			return pick_seeded_tile_coords(treasure_tiles, Vector2i(7, 1), cell_position, "treasure")
 		BlockType.DIAMOND:
-			return pick_tile_coords(diamond_tiles, Vector2i(2, 3))
+			return pick_seeded_tile_coords(diamond_tiles, Vector2i(2, 3), cell_position, "diamond")
 		BlockType.WARPGEMS:
-			return pick_tile_coords(warpgems_tiles, Vector2i(6, 2))
+			return pick_seeded_tile_coords(warpgems_tiles, Vector2i(6, 2), cell_position, "warp_gems")
 		BlockType.BLACKHOLECRYSTALS:
-			return pick_tile_coords(blackholecrystal_tiles, Vector2i(0, 3))
+			return pick_seeded_tile_coords(blackholecrystal_tiles, Vector2i(0, 3), cell_position, "black_hole_crystals")
 		BlockType.PLANETCORE:
-			return pick_tile_coords(blackholecrystal_tiles, Vector2i(0, 3))
+			return pick_seeded_tile_coords(blackholecrystal_tiles, Vector2i(0, 3), cell_position, "planet_core")
 		_:
-			return pick_tile_coords(dirt_tiles, Vector2i(0, 0))
+			return pick_seeded_tile_coords(dirt_tiles, Vector2i(0, 0), cell_position, "fallback")
 
 
-func get_dug_dirt_tile_coords() -> Vector2i:
-	return pick_tile_coords(dug_dirt_tiles, Vector2i(4, 3))
+func get_dug_dirt_tile_coords(cell_position: Vector2i) -> Vector2i:
+	return pick_seeded_tile_coords(dug_dirt_tiles, Vector2i(4, 3), cell_position, "background_dirt")
 
 
-func pick_tile_coords(tile_options: Array[Vector2i], fallback: Vector2i) -> Vector2i:
+func pick_seeded_tile_coords(
+	tile_options: Array[Vector2i],
+	fallback: Vector2i,
+	cell_position: Vector2i,
+	tile_purpose: String
+) -> Vector2i:
 	if tile_options.is_empty():
 		return fallback
-	
-	return tile_options.pick_random()
+
+	var variant_seed := SeedManager.derive_seed(
+		SeedManager.starting_planet_seed,
+		"%s:%d:%d" % [tile_purpose, cell_position.x, cell_position.y]
+	)
+	return tile_options[variant_seed % tile_options.size()]
+
+
+func get_generated_planet_layout_signature(row_limit: int = -1) -> String:
+	var signature: int = 5381
+	var last_row := generated_row_count if row_limit < 0 else mini(row_limit, generated_row_count)
+	for row in range(get_first_ground_row(), last_row):
+		for column in grid_width:
+			var cell := Vector2i(column, row)
+			var block_type: int = int(block_types_by_cell.get(cell, BlockType.EMPTY))
+			var foreground_coords := visual_mine_tiles.get_cell_atlas_coords(cell)
+			var background_coords := background_tiles.get_cell_atlas_coords(cell)
+			for value in [block_type, foreground_coords.x, foreground_coords.y, background_coords.x, background_coords.y]:
+				signature = (signature * 33 + int(value) + 2) % 2147483647
+	return str(signature)
 
 
 func position_player_in_sky() -> void:
@@ -591,69 +639,79 @@ func create_surface_shop() -> void:
 	mine_tiles.add_child(shop_button)
 
 
-func create_dirt_depth_tint_overlay() -> void:
-	dirt_depth_tint_overlay = Node2D.new()
-	dirt_depth_tint_overlay.name = "DirtDepthTintOverlay"
-	dirt_depth_tint_overlay.z_index = 0
-	dirt_depth_tint_overlay.draw.connect(_on_dirt_depth_tint_overlay_draw)
-	add_child(dirt_depth_tint_overlay)
+func create_terrain_depth_darkening_overlay() -> void:
+	terrain_depth_darkening_overlay = Node2D.new()
+	terrain_depth_darkening_overlay.name = "TerrainDepthDarkeningOverlay"
+	# Terrain tiles are at z-index -2/-1. Gameplay actors and infrastructure begin at 7.
+	terrain_depth_darkening_overlay.z_index = 0
+	terrain_depth_darkening_overlay.draw.connect(_on_terrain_depth_darkening_overlay_draw)
+	add_child(terrain_depth_darkening_overlay)
 
 
-func _on_dirt_depth_tint_overlay_draw() -> void:
-	if dirt_depth_tint_overlay == null:
+func _on_terrain_depth_darkening_overlay_draw() -> void:
+	if terrain_depth_darkening_overlay == null or not depth_darkening_enabled:
 		return
 	
 	var tile_size := Vector2(64.0, 64.0)
-	for y in range(get_first_ground_row(), generated_row_count):
-		var tint_color := get_dirt_depth_tint_for_row(y)
-		for x in grid_width:
-			var cell_position := Vector2i(x, y)
-			var block_type: BlockType = block_types_by_cell.get(cell_position, BlockType.DIRT)
-			if block_type != BlockType.DIRT and block_type != BlockType.EMPTY:
-				continue
-			
-			var tile_center := background_tiles.map_to_local(cell_position)
-			dirt_depth_tint_overlay.draw_rect(
-				Rect2(tile_center - tile_size * 0.5, tile_size),
-				tint_color,
-				true
-			)
+	var row_width := tile_size.x * float(grid_width)
+	for row in range(get_first_ground_row(), generated_row_count):
+		var brightness := get_depth_brightness_for_row(row)
+		var darkness_alpha := 1.0 - brightness
+		if darkness_alpha <= 0.0:
+			continue
 
-
-func get_dirt_depth_tint_for_row(row: int) -> Color:
-	var depth_meters: int = maxi(row - get_first_ground_row(), 0) * depth_meters_per_row
-	var tint_alpha: float = clampf(dirt_depth_tint_alpha, 0.0, 1.0)
-	
-	if depth_meters < dirt_chocolate_gradient_depth_meters:
-		var chocolate_ratio: float = clampf(
-			float(depth_meters) / maxf(float(dirt_chocolate_gradient_depth_meters), 1.0),
-			0.0,
-			1.0
+		var first_tile_center := background_tiles.map_to_local(Vector2i(0, row))
+		terrain_depth_darkening_overlay.draw_rect(
+			Rect2(
+				Vector2(first_tile_center.x - tile_size.x * 0.5, first_tile_center.y - tile_size.y * 0.5),
+				Vector2(row_width, tile_size.y)
+			),
+			Color(0.0, 0.0, 0.0, darkness_alpha),
+			true
 		)
-		return color_with_alpha(Color("#4A2412").lerp(Color("#1F0D07"), chocolate_ratio), tint_alpha)
-	
-	var red_ratio: float = clampf(
-		float(depth_meters - dirt_chocolate_gradient_depth_meters)
-		/ maxf(float(dirt_red_gradient_depth_meters - dirt_chocolate_gradient_depth_meters), 1.0),
+
+
+func get_depth_brightness_for_row(row: int) -> float:
+	var depth_rows := maxi(row - get_first_ground_row(), 0)
+	var raw_depth_ratio := clampf(
+		float(depth_rows) / maxf(float(depth_distribution_full_row), 1.0),
 		0.0,
 		1.0
 	)
-	return color_with_alpha(Color("#D83C1E").lerp(Color("#3A0805"), red_ratio), tint_alpha)
-
-
-func color_with_alpha(color: Color, alpha: float) -> Color:
-	return Color(color.r, color.g, color.b, alpha)
-
-
-func build_fuel_depot() -> void:
-	if has_fuel_depot:
-		return
+	var gradient_start := minf(depth_gradient_start, depth_gradient_end)
+	var gradient_end := maxf(depth_gradient_start, depth_gradient_end)
+	var gradient_ratio := 0.0
+	if gradient_end > gradient_start:
+		gradient_ratio = inverse_lerp(gradient_start, gradient_end, raw_depth_ratio)
+	elif raw_depth_ratio >= gradient_end:
+		gradient_ratio = 1.0
 	
-	has_fuel_depot = true
-	max_lander_rocket_fuel_tons += fuel_depot_rocket_fuel_capacity_bonus
-	create_fuel_depot_visuals()
-	refresh_lander_view_or_shop_ui()
-	update_hud()
+	return clampf(
+		lerpf(surface_brightness, deep_brightness, clampf(gradient_ratio, 0.0, 1.0)),
+		0.0,
+		1.0
+	)
+
+
+func sync_fuel_depot_with_upgrade_level() -> void:
+	var should_have_fuel_depot := int(upgrade_levels.get("planetary_fuel_depot", 0)) > 0
+	if should_have_fuel_depot:
+		max_lander_rocket_fuel_tons += fuel_depot_rocket_fuel_capacity_bonus
+
+	if should_have_fuel_depot == has_fuel_depot:
+		return
+
+	has_fuel_depot = should_have_fuel_depot
+	if has_fuel_depot:
+		create_fuel_depot_visuals()
+		return
+
+	if fuel_depot_sprite != null:
+		fuel_depot_sprite.queue_free()
+		fuel_depot_sprite = null
+	if fuel_depot_pipe_sprite != null:
+		fuel_depot_pipe_sprite.queue_free()
+		fuel_depot_pipe_sprite = null
 
 
 func create_fuel_depot_visuals() -> void:
@@ -725,11 +783,6 @@ func get_player_rect(test_position: Vector2) -> Rect2:
 
 
 func drain_fuel_for_movement(delta: float) -> void:
-	if is_god_mode_active:
-		fuel_seconds = max_fuel_seconds
-		update_hud()
-		return
-	
 	var fuel_drain_rate := fuel_consumption_multiplier
 	
 	if not is_movement_input_pressed():
@@ -833,6 +886,99 @@ func reveal_surface_ground_cells() -> void:
 
 func is_cell_revealed(cell: Vector2i) -> bool:
 	return revealed_cells.has(cell)
+
+
+func apply_developer_test_configuration(configuration: Dictionary) -> void:
+	for upgrade_id in configuration.get("upgrade_levels", {}):
+		upgrade_levels[upgrade_id] = int(configuration["upgrade_levels"][upgrade_id])
+	recalculate_stats_from_upgrade_levels()
+
+	credits = maxi(int(configuration.get("credits", credits)), 0)
+	var requested_resource_counts: Dictionary = configuration.get("resource_counts", {})
+	if configuration.has("raw_fuel") and not requested_resource_counts.has("Raw Fuel"):
+		requested_resource_counts["Raw Fuel"] = configuration["raw_fuel"]
+	for resource_name in requested_resource_counts:
+		resources[resource_name] = maxi(int(requested_resource_counts[resource_name]), 0)
+		cargo_hold_resources[resource_name] = 0
+	lander_rocket_fuel_tons = clampi(
+		int(configuration.get("rocket_fuel", lander_rocket_fuel_tons)),
+		0,
+		max_lander_rocket_fuel_tons
+	)
+	fuel_seconds = clampf(
+		float(configuration.get("active_fuel", fuel_seconds)),
+		0.0,
+		max_fuel_seconds
+	)
+	teleport_player_to_test_depth(int(configuration.get("depth_meters", 0)))
+	SeedManager.update_starting_escape_fuel(
+		lander_rocket_fuel_tons,
+		return_to_starship_required_rocket_fuel_tons
+	)
+	update_shop_ui()
+	update_hud()
+
+
+func get_developer_test_resource_definitions() -> Array[Dictionary]:
+	var definitions: Array[Dictionary] = []
+	for resource_name in get_sellable_resource_names():
+		definitions.append({
+			"id": resource_name,
+			"label": resource_name,
+			"minimum": 0,
+			"maximum": 10000,
+			"step": 1,
+		})
+	return definitions
+
+
+func get_developer_test_presets() -> Array[Dictionary]:
+	return [
+		{"label": "Surface / Level 0", "depth_meters": 0, "default_upgrade_level": 0},
+		{"label": "3000m / Level 0", "depth_meters": 3000, "default_upgrade_level": 0},
+		{"label": "3000m / Drill 1", "depth_meters": 3000, "default_upgrade_level": 0, "upgrade_levels": {"miner_drill_efficiency": 1}},
+		{"label": "3000m / Drill 3", "depth_meters": 3000, "default_upgrade_level": 0, "upgrade_levels": {"miner_drill_efficiency": 3}},
+		{"label": "3000m / Drill 5", "depth_meters": 3000, "default_upgrade_level": 0, "upgrade_levels": {"miner_drill_efficiency": 5}},
+	]
+
+
+func teleport_player_to_test_depth(depth_meters: int) -> void:
+	var safe_depth_meters := maxi(depth_meters, 0)
+	if safe_depth_meters == 0:
+		position_player_in_sky()
+		update_revealed_cells()
+		update_camera()
+		return
+
+	var target_row := get_first_ground_row() + roundi(
+		float(safe_depth_meters) / maxf(float(depth_meters_per_row), 1.0)
+	)
+	generate_rows_until(target_row + generation_buffer_rows)
+	var target_column := clampi(floori(float(grid_width) * 0.5), 1, grid_width - 2)
+
+	# Carve only a 3x2 arrival pocket; the surrounding seeded resource field stays intact.
+	for row in range(target_row - 1, target_row + 1):
+		for column in range(target_column - 1, target_column + 2):
+			var chamber_cell := Vector2i(column, row)
+			block_types_by_cell.erase(chamber_cell)
+			visual_mine_tiles.erase_cell(chamber_cell)
+
+	var target_cell := Vector2i(target_column, target_row)
+	player_marker.position = mine_tiles.map_to_local(target_cell)
+	player_velocity = Vector2.ZERO
+	is_on_ground = false
+	reset_mining_progress()
+	reveal_developer_test_area(target_cell, 6)
+	update_camera()
+
+
+func reveal_developer_test_area(center_cell: Vector2i, radius: int) -> void:
+	for row in range(center_cell.y - radius, center_cell.y + radius + 1):
+		for column in range(center_cell.x - radius, center_cell.x + radius + 1):
+			if column >= 0 and column < grid_width and row >= 0:
+				revealed_cells[Vector2i(column, row)] = true
+	if fog_overlay != null:
+		fog_overlay.queue_redraw()
 
 
 func handle_player_movement(delta: float) -> void:
@@ -1081,8 +1227,6 @@ func mine_target_cell(target_cell: Vector2i) -> void:
 	else:
 		play_block_mined_feedback(target_cell, resource_name, 0)
 	
-	if dirt_depth_tint_overlay != null:
-		dirt_depth_tint_overlay.queue_redraw()
 	update_hud()
 
 
@@ -1163,9 +1307,6 @@ func step_lodestones_down() -> bool:
 		move_lodestone_block(cell, target_cell)
 		moved_any = true
 	
-	if moved_any and dirt_depth_tint_overlay != null:
-		dirt_depth_tint_overlay.queue_redraw()
-	
 	return moved_any
 
 
@@ -1186,7 +1327,7 @@ func move_lodestone_block(from_cell: Vector2i, to_cell: Vector2i) -> void:
 	visual_mine_tiles.set_cell(
 		to_cell,
 		tile_source_id,
-		get_tile_coords_for_block_type(BlockType.LODESTONE)
+		get_tile_coords_for_block_type(BlockType.LODESTONE, to_cell)
 	)
 	
 	if not can_lodestone_fall_to(to_cell + Vector2i.DOWN):
@@ -1434,6 +1575,8 @@ func update_mining_overlays() -> void:
 
 func create_shop_ui() -> void:
 	initialize_upgrade_definitions()
+	initialize_upgrade_stat_rules()
+	capture_base_upgrade_stats()
 	
 	var shop_layer := CanvasLayer.new()
 	shop_layer.name = "ShopUI"
@@ -1494,6 +1637,12 @@ func create_shop_ui() -> void:
 	box.add_child(shop_content)
 	
 	show_shop_main_view()
+
+
+func create_developer_test_panel() -> void:
+	developer_test_panel = DeveloperTestPanelScript.new()
+	add_child(developer_test_panel)
+	developer_test_panel.setup(self)
 
 
 func add_shop_button(parent: Control, text: String, callback: Callable) -> Button:
@@ -1619,10 +1768,6 @@ func show_shop_main_view() -> void:
 	summary.add_theme_font_size_override("font_size", 22)
 	summary.text = "Choose a station."
 	center_box.add_child(summary)
-	
-	var god_mode_button := add_shop_button(shop_content, "God Mode: Max Upgrades", Callable(self, "_on_god_mode_pressed"))
-	god_mode_button.custom_minimum_size = Vector2(360.0, 48.0)
-	god_mode_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	
 	add_shop_button(shop_content, "Leave Shop", Callable(self, "close_shop"))
 	update_shop_ui()
@@ -1833,6 +1978,34 @@ func initialize_upgrade_definitions() -> void:
 	}
 
 
+func initialize_upgrade_stat_rules() -> void:
+	# Standard numeric upgrades are data-driven so new tiers/categories do not require UI changes.
+	upgrade_stat_rules = {
+		"miner_drill_efficiency": [stat_rule("drill_damage_per_second", 1.1)],
+		"miner_cargo_capacity": [stat_rule("inventory_capacity", 1.1, true)],
+		"miner_fuel_tank": [stat_rule("max_fuel_seconds", 1.1)],
+		"miner_engine_power": [
+			stat_rule("move_speed", 1.05),
+			stat_rule("ground_acceleration", 1.05),
+			stat_rule("air_acceleration", 1.05),
+		],
+		"miner_engine_efficiency": [stat_rule("fuel_consumption_multiplier", 0.9)],
+		"lander_fuel_storage_capacity": [
+			stat_rule("max_lander_mining_fuel_kg", 1.1, true),
+			stat_rule("max_lander_rocket_fuel_tons", 1.1, true),
+		],
+		"lander_cargo_capacity": [stat_rule("cargo_hold_capacity", 1.1, true)],
+	}
+
+
+func stat_rule(property_name: String, multiplier: float, ceil_each_level: bool = false) -> Dictionary:
+	return {
+		"property": property_name,
+		"multiplier": multiplier,
+		"ceil_each_level": ceil_each_level,
+	}
+
+
 func make_upgrade(upgrade_id: String, upgrade_name: String, base_costs: Array, description: String, max_level: int = 10) -> Dictionary:
 	return {
 		"id": upgrade_id,
@@ -1922,30 +2095,6 @@ func _on_upgrade_pressed(category_name: String, upgrade_id: String) -> void:
 	update_hud()
 
 
-func _on_god_mode_pressed() -> void:
-	is_god_mode_active = true
-	
-	for category_name in upgrade_definitions.keys():
-		var category_upgrades: Array = upgrade_definitions[category_name]
-		for definition in category_upgrades:
-			var upgrade_id: String = String(definition["id"])
-			var max_level: int = int(definition.get("max_level", 10))
-			var current_level: int = int(upgrade_levels.get(upgrade_id, 0))
-			
-			while current_level < max_level:
-				current_level += 1
-				upgrade_levels[upgrade_id] = current_level
-				apply_upgrade_effect(upgrade_id, current_level)
-	
-	credits = maxi(credits, starting_credits)
-	fuel_seconds = max_fuel_seconds
-	lander_mining_fuel_kg = max_lander_mining_fuel_kg
-	lander_rocket_fuel_tons = max_lander_rocket_fuel_tons
-	update_revealed_cells()
-	update_shop_ui()
-	update_hud()
-
-
 func get_upgrade_definition(category_name: String, upgrade_id: String) -> Dictionary:
 	var category_upgrades: Array = upgrade_definitions.get(category_name, [])
 	for definition in category_upgrades:
@@ -1954,32 +2103,60 @@ func get_upgrade_definition(category_name: String, upgrade_id: String) -> Dictio
 	return {}
 
 
-func apply_upgrade_effect(upgrade_id: String, new_level: int) -> void:
-	match upgrade_id:
-		"miner_drill_efficiency":
-			drill_damage_per_second *= 1.1
-		"miner_cargo_capacity":
-			inventory_capacity = ceili(float(inventory_capacity) * 1.1)
-		"miner_fuel_tank":
-			var old_max_fuel := max_fuel_seconds
-			max_fuel_seconds *= 1.1
-			fuel_seconds += max_fuel_seconds - old_max_fuel
-		"miner_engine_power":
-			move_speed *= 1.05
-			ground_acceleration *= 1.05
-			air_acceleration *= 1.05
-		"miner_engine_efficiency":
-			fuel_consumption_multiplier *= 0.9
-		"miner_sensor_strength":
-			reveal_radius_tiles = maxi(reveal_radius_tiles, 1 + ceili(float(new_level) / 2.0))
-			update_revealed_cells()
-		"lander_fuel_storage_capacity":
-			max_lander_mining_fuel_kg = ceili(float(max_lander_mining_fuel_kg) * 1.1)
-			max_lander_rocket_fuel_tons = ceili(float(max_lander_rocket_fuel_tons) * 1.1)
-		"lander_cargo_capacity":
-			cargo_hold_capacity = ceili(float(cargo_hold_capacity) * 1.1)
-		"planetary_fuel_depot":
-			build_fuel_depot()
+func capture_base_upgrade_stats() -> void:
+	base_upgrade_stats.clear()
+	for rules in upgrade_stat_rules.values():
+		for rule in rules:
+			var property_name: String = rule["property"]
+			if not base_upgrade_stats.has(property_name):
+				base_upgrade_stats[property_name] = get(property_name)
+	base_upgrade_stats["reveal_radius_tiles"] = reveal_radius_tiles
+
+
+func apply_upgrade_effect(_upgrade_id: String, _new_level: int) -> void:
+	recalculate_stats_from_upgrade_levels()
+
+
+func recalculate_stats_from_upgrade_levels() -> void:
+	if base_upgrade_stats.is_empty():
+		return
+
+	var old_max_fuel := max_fuel_seconds
+	for property_name in base_upgrade_stats:
+		set(property_name, base_upgrade_stats[property_name])
+
+	for upgrade_id in upgrade_stat_rules:
+		var level := int(upgrade_levels.get(upgrade_id, 0))
+		for rule in upgrade_stat_rules[upgrade_id]:
+			apply_upgrade_stat_rule(rule, level)
+
+	var sensor_level := int(upgrade_levels.get("miner_sensor_strength", 0))
+	reveal_radius_tiles = maxi(int(base_upgrade_stats["reveal_radius_tiles"]), 1 + ceili(float(sensor_level) / 2.0))
+
+	sync_fuel_depot_with_upgrade_level()
+	if max_fuel_seconds > old_max_fuel:
+		fuel_seconds += max_fuel_seconds - old_max_fuel
+	fuel_seconds = clampf(fuel_seconds, 0.0, max_fuel_seconds)
+	lander_mining_fuel_kg = mini(lander_mining_fuel_kg, max_lander_mining_fuel_kg)
+	lander_rocket_fuel_tons = mini(lander_rocket_fuel_tons, max_lander_rocket_fuel_tons)
+	update_revealed_cells()
+	rebuild_fuel_bar_segments()
+
+
+func apply_upgrade_stat_rule(rule: Dictionary, level: int) -> void:
+	var property_name: String = rule["property"]
+	var multiplier: float = rule["multiplier"]
+	if rule.get("ceil_each_level", false):
+		set(property_name, get_compounded_ceil_value(int(get(property_name)), level, multiplier))
+	else:
+		set(property_name, float(get(property_name)) * pow(multiplier, level))
+
+
+func get_compounded_ceil_value(base_value: int, level: int, multiplier: float) -> int:
+	var result := base_value
+	for _step in level:
+		result = ceili(float(result) * multiplier)
+	return result
 
 
 func get_refuel_button_text() -> String:
@@ -2022,6 +2199,11 @@ func close_shop() -> void:
 func update_shop_ui() -> void:
 	if shop_status_label == null:
 		return
+
+	SeedManager.update_starting_escape_fuel(
+		lander_rocket_fuel_tons,
+		return_to_starship_required_rocket_fuel_tons
+	)
 	
 	var refuel_kg := get_mining_fuel_kg_needed_for_full_refuel()
 	if refuel_button != null:
@@ -2032,11 +2214,7 @@ func update_shop_ui() -> void:
 		)
 	
 	if return_to_starship_status_label != null:
-		return_to_starship_status_label.text = "Rocket Fuel: %d / %d tons required\nPlanet Core: %s" % [
-			lander_rocket_fuel_tons,
-			return_to_starship_required_rocket_fuel_tons,
-			"secured" if has_planet_core() else "required"
-		]
+		return_to_starship_status_label.text = get_return_to_starship_status_text()
 	
 	if return_to_starship_button != null:
 		return_to_starship_button.disabled = not can_return_to_starship()
@@ -2064,6 +2242,26 @@ func update_shop_ui() -> void:
 		]
 	)
 	update_lander_cargo_hold_list()
+
+
+func get_return_to_starship_status_text() -> String:
+	if SeedManager.is_starting_scenario_active():
+		var objective_status := (
+			"Escape fuel ready — return to the Starship"
+			if can_return_to_starship()
+			else "Stranded — process rocket fuel to escape"
+		)
+		return "Rocket Fuel: %d / %d tons required\n%s" % [
+			lander_rocket_fuel_tons,
+			return_to_starship_required_rocket_fuel_tons,
+			objective_status,
+		]
+
+	return "Rocket Fuel: %d / %d tons required\nPlanet Core: %s" % [
+		lander_rocket_fuel_tons,
+		return_to_starship_required_rocket_fuel_tons,
+		"secured" if has_planet_core() else "required",
+	]
 
 
 func refresh_lander_view_or_shop_ui() -> void:
@@ -2310,6 +2508,10 @@ func complete_fuel_processing() -> void:
 		max_lander_rocket_fuel_tons,
 		lander_rocket_fuel_tons + rocket_fuel_tons_per_raw_fuel
 	)
+	SeedManager.update_starting_escape_fuel(
+		lander_rocket_fuel_tons,
+		return_to_starship_required_rocket_fuel_tons
+	)
 	refresh_lander_view_or_shop_ui()
 	update_hud()
 
@@ -2336,6 +2538,8 @@ func _on_return_to_starship_pressed() -> void:
 
 
 func can_return_to_starship() -> bool:
+	if SeedManager.is_starting_scenario_active():
+		return lander_rocket_fuel_tons >= return_to_starship_required_rocket_fuel_tons
 	return lander_rocket_fuel_tons >= return_to_starship_required_rocket_fuel_tons and has_planet_core()
 
 
@@ -2588,12 +2792,23 @@ func trigger_victory() -> void:
 	if countdown_label != null:
 		countdown_label.visible = false
 	
+	var completed_starting_scenario := SeedManager.is_starting_scenario_active()
+	if completed_starting_scenario:
+		SeedManager.load_starship_escape_fuel(lander_rocket_fuel_tons)
+		SeedManager.unlock_galaxy_map()
+
 	if game_over_label != null:
-		game_over_label.text = "You win!\nPlanet Core secured. Rocket fuel loaded.\nReturning to the starship..."
+		if completed_starting_scenario:
+			game_over_label.text = "Escape fuel loaded.\nGalaxy route access unlocked.\nReturning to the Starship..."
+		else:
+			game_over_label.text = "You win!\nPlanet Core secured. Rocket fuel loaded.\nReturning to the starship..."
 		game_over_label.visible = true
 	
 	await get_tree().create_timer(3.0).timeout
-	get_tree().change_scene_to_file("res://Scenes/main_game_menu.tscn")
+	if completed_starting_scenario:
+		get_tree().change_scene_to_file("res://Scenes/StarSystemView.tscn")
+	else:
+		get_tree().change_scene_to_file("res://Scenes/main_game_menu.tscn")
 
 
 func create_hud() -> void:
@@ -2771,10 +2986,10 @@ func update_hud() -> void:
 	update_hud_cargo_icons()
 	update_gauge_cluster()
 	
-	hud_label.text = "Credits: %d\nCargo: %d / %d" % [
+	hud_label.text = "Credits: %d\nCargo: %d / %d\nDeveloper Setup: Ctrl+T" % [
 		credits,
 		get_inventory_count(),
-		inventory_capacity
+		inventory_capacity,
 	]
 
 
@@ -2833,8 +3048,19 @@ func _draw() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if is_game_over or is_arrival_countdown_active:
 		return
+
+	if event is InputEventKey:
+		var key_event := event as InputEventKey
+		var is_t_key := key_event.keycode == KEY_T or key_event.physical_keycode == KEY_T
+		if key_event.pressed and not key_event.echo and key_event.ctrl_pressed and is_t_key:
+			developer_test_panel.toggle()
+			get_viewport().set_input_as_handled()
+			return
 	
 	if event.is_action_pressed("ui_cancel"):
+		if developer_test_panel != null and developer_test_panel.is_open():
+			developer_test_panel.close()
+			return
 		if is_shop_open:
 			close_shop()
 			return

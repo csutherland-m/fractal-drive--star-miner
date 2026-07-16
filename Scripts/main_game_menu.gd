@@ -16,7 +16,8 @@ func _ready() -> void:
 
 
 func _on_play_pressed() -> void:
-	get_tree().change_scene_to_file("res://Scenes/StarSystemView.tscn")
+	SeedManager.start_new_run()
+	get_tree().change_scene_to_file("res://Scenes/AsteroidMining.tscn")
 
 
 func _on_quit_pressed() -> void:

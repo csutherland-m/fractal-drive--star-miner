@@ -6,10 +6,10 @@ This is the Codex working copy of the Godot project.
 
 - Main menu loads first.
 - The main menu uses a single static baked star background to avoid oversized animated stars and reduce title-screen GPU/CPU load.
-- Play starts the Star System View.
+- Play starts a fresh default-seeded run directly on the stranded tutorial planet.
 - The Star System View is a clickable 2D local-system map with a star, orbit rings, orbiting planets, an asteroid belt, and a starship marker.
 - Planet visuals use placeholder sprite art from `Sprites/Planets/Placeholders/`.
-- Each generated local system guarantees at least one rocky planet and one gas giant, then fills the remaining planet slots from a random mix of rocky, ice, lava, and gas giant worlds.
+- Each seeded local system guarantees at least one rocky planet and one gas giant, then fills the remaining planet slots from a deterministic mix of rocky, ice, lava, gas giant, crystal, and ferric worlds.
 - Solar-system orbital motion is scaled by `ORBIT_SPEED_MULTIPLIER = 0.1` in `Scripts/StarSystemView.gd` so planets, enemies, the asteroid belt, and player orbital motion move at roughly one tenth of the previous speed.
 - Orbital visuals support up to 120 FPS and use subpixel positioning, keeping slow-moving planets, enemies, asteroids, and the player ship from stepping between whole pixels.
 - The star-system field renders at half scale for a 2x zoomed-out view, with antialiased enemy reticles and orbital geometry for smoother motion.
@@ -31,10 +31,49 @@ This is the Codex working copy of the Godot project.
 - The mining HUD includes a bottom gauge cluster image with live fuel needle and depth readout overlays; depth increases by 10m per row below the surface.
 - The mining map extends downward as the player descends, with a camera follow, nearby tile reveal, and visible starting surface layers.
 - The mining world currently uses a deeper 240-row resource progression curve for playtesting faster exploration.
-- Dirt blocks use a depth tint overlay: they darken toward chocolate brown, snap to bright red at 1000m, then fade toward a darker burnt red.
+- Mining terrain uses a neutral depth-darkening gradient: foreground blocks and exposed background dirt stay close to normal at the surface and gradually darken together with depth.
 - The mining surface has a landed shop ship resting above the center tile, while the miner starts two tiles to its right.
-- The lander menu now shows a Return to Starship goal requiring 20 tons of rocket fuel and the Planet Core before departure is available.
+- On the starting planet, the lander menu requires 20 tons of processed rocket fuel before departure; later/non-tutorial mining runs retain the existing Planet Core requirement.
 - Planetary Upgrades now exists as an upgrade category; the first one-time build is a Fuel Depot next to the lander.
+
+## Seeded Runs and Galaxy Foundation
+
+- `Scripts/SeedManager.gd` is an autoload registered in `project.godot`. It is the single owner of `current_run_seed`, `galaxy_seed`, `starting_system_seed`, `starting_planet_seed`, scenario state, galaxy data, current system, and committed path history.
+- New games call `SeedManager.start_new_run()` with `STAR_MINER_DEFAULT_SEED_001`. The function also accepts another seed string for future manual-seed UI. A stable text hash and purpose-specific derived seeds keep galaxy, system, and planet generation isolated from one another.
+- The starting planet uses its own `RandomNumberGenerator` seeded from `starting_planet_seed`. Block types, ore/resource positions, voids, background dirt variants, foreground tile variants, Lode Stones, and the Planet Core location are deterministic. Mining-time ore yield and Treasure upgrade rolls intentionally remain runtime rolls in this pass.
+- Dynamic rows use the same dedicated planet RNG, so unrelated particles, combat rolls, elapsed time, and other global randomness cannot change the later planet layout.
+- The Starship begins with zero escape-fuel tons. The starting scenario progresses through `STARTING_STRANDED`, `MINING_FOR_ESCAPE_FUEL`, `READY_TO_LEAVE_STARTING_PLANET`, and `GALAXY_MAP_UNLOCKED`. The tutorial departure requires 20 tons of rocket fuel but does not require the Planet Core.
+- A one-time `AcceptDialog` transmission from a friendly cargo hauler appears on the first starting-planet landing. It explains the mining/fuel objective and warns about Demon systems; `cargo_hauler_intro_shown` prevents repeats during that run.
+- The seeded galaxy contains exactly 64 systems: one depth-0 tutorial system and nine systems at each depth from 1 through 7. Each system stores `system_id`, `display_name`, `system_seed`, `path_depth`, `difficulty_tier`, `available_resources`, `is_demon_system`, and `connected_system_ids`.
+- Difficulty tiers currently map directly from path depths 0-7 to tiers 1-8. Demon flags begin at depth 6 and become more common at depth 7; they are data hooks only for now.
+- The starting system exposes three forward choices; later systems expose two. `get_available_next_systems()` retrieves valid choices, `select_next_system()` commits one forward step without allowing backtracking, and `print_available_next_systems()` provides the current debug listing. A complete run path is therefore about eight systems including the tutorial system.
+- Leaving the tutorial planet unlocks the existing Star System View as a route-selection placeholder. It displays the current system, depth, difficulty, and available next-system names, but it is not the final Slay-the-Spire-style galaxy UI.
+
+### Determinism Test
+
+Run:
+
+`Godot_v4.6.3-stable_win64_console.exe --headless --path <project path> --script res://Tests/SeedFoundationTest.gd`
+
+The regression starts two new games, generates both galaxies, both seeded local-system layouts, and the first 120 starting-planet rows, then verifies identical seeds, galaxy JSON, system/orbit data, terrain/resource/tile signature, Planet Core location, route choices, Demon flags, route commitment, escape-fuel state, guide one-shot state, scenario transitions, and the unlocked route placeholder. The current default planet signature is `1208307249`.
+
+### Seed Foundation Files
+
+- `project.godot`: registers the `SeedManager` autoload.
+- `Scripts/SeedManager.gd`: seeds, run/scenario state, 64-system graph, difficulty, Demon flags, route selection, and guide-message tracking.
+- `Scripts/main_game_menu.gd`: starts a new seeded run and enters the tutorial planet.
+- `Scripts/AsteroidMining.gd`: deterministic planet generation, layout signature, guide placeholder, escape gating, and galaxy unlock transition.
+- `Scripts/StarSystemView.gd`: deterministic local-system generation and route-foundation status text.
+- `Tests/SeedFoundationTest.gd`: headless determinism and state regression.
+- `README.md`: architecture, testing, limitations, and follow-up notes.
+
+### Current Limitations and Suggested Next Steps
+
+- Run state persists across scene changes through the autoload but is not saved to disk yet.
+- The final galaxy/path-selection screen, route buttons, path visualization, intro cinematic, dialogue tree, and cargo-hauler character art are not implemented.
+- Selecting a graph destination currently requires the `SeedManager.select_next_system(system_id)` API/debugger; the existing Star System View only lists available destinations.
+- Later-system planet seed selection and full difficulty application to enemies/resources remain future work. This pass only guarantees and balances the starting planet seed.
+- Next: build a dedicated branching galaxy-map scene, connect its buttons to `select_next_system()`, persist run state, derive later planet seeds from the selected system/planet, and feed `difficulty_tier` into encounter and resource tuning.
 
 ## Main Scenes
 
@@ -46,6 +85,7 @@ This is the Codex working copy of the Godot project.
 ## Main Scripts
 
 - `Scripts/main_game_menu.gd`: menu buttons.
+- `Scripts/SeedManager.gd`: centralized seeded run state, galaxy graph, starting scenario, and route APIs.
 - `Scripts/StarSystemView.gd`: local-system map, orbiting planets, click targets, and curved ship travel.
 - `Scripts/CombatResolver.gd`: strategic combat stats and round-resolution math.
 - `Scripts/Starfield.gd`: generated moving star background with capped star sizes and throttled redraws.
@@ -94,16 +134,41 @@ This is the Codex working copy of the Godot project.
 - Refueling the miner consumes lander mining fuel kg when available.
 - If the lander mining fuel tank is empty, emergency refueling costs 10 Credits per kg.
 - The lander has separate storage tanks for mining fuel and rocket fuel.
-- The base lander rocket fuel tank holds 20 tons. Returning to the starship currently requires 20 tons plus the Planet Core and triggers the current win-state message before returning to the main menu.
+- The base lander rocket fuel tank holds 20 tons. The starting scenario requires all 20 tons to unlock galaxy-route access; later/non-tutorial runs still use the existing 20-ton-plus-Planet-Core completion rule.
 - Building the Fuel Depot adds 20 tons of rocket fuel capacity, raising total first-pass storage from 20 to 40 tons.
 - Touch the lander above the surface to deposit cargo, open the Lander screen, sell ore, process raw fuel, refuel, and buy upgrades.
-- The shop main screen includes a playtest God Mode button that maxes all upgrade levels, fills current miner/lander fuel tanks, and prevents miner fuel from depleting for the run.
+- Press `Ctrl+T` in the mining scene to open the Developer Test Setup panel. It can teleport to an exact depth, assign exact upgrade levels, and set test credits, Raw Fuel, lander rocket fuel, and active miner fuel without playing through progression first.
 - The Lander screen shows Cargo Hold contents in a left-side icon list.
 - Selling, processing, and upgrades can use resources from both miner cargo and the cargo hold.
 - Existing non-credit upgrade resource costs are scaled by 10 for the new 2-10 ore yield economy. Credit costs are unchanged.
 - Planetary Upgrades currently contains Fuel Depot, a one-time build costing scaled ore/resources and Credits.
 - Infrastructure sprites render as `Sprite2D` children of `MineTiles` with z-index 8, above terrain and below the miner at z-index 10.
 - `Esc`: pause.
+- `Ctrl+T`: open or close the Developer Test Setup panel.
+
+## Developer Test Setup
+
+- God Mode has been removed. The replacement is a direct, reversible test-loadout panel in `Scripts/DeveloperTestPanel.gd`.
+- The panel pauses gameplay while open and provides exact controls for target depth, every upgrade level, Credits, Raw Fuel, lander rocket fuel, and active miner fuel.
+- Quick presets include surface/no upgrades and 3000m with Drill Efficiency levels 0, 1, 3, or 5. Presets populate the controls; `Apply Setup + Teleport` performs the change.
+- A depth teleport generates the same deterministic planet rows that normal descent would generate, moves the miner to the requested depth, reveals a 13x13 inspection area, and carves only a 3x2 arrival pocket. Surrounding ore placement remains untouched for rarity and drill-feel testing.
+- Upgrade-derived stats are recalculated from captured base values and explicit `upgrade_levels`. Changing Drill Efficiency from level 5 back to level 1 therefore produces the real level-1 drill speed instead of attempting to reverse accumulated multipliers.
+- The panel builds upgrade controls directly from `upgrade_definitions`, including category and `max_level`. New categories and higher upgrade tiers appear automatically.
+- Resource controls come from `get_developer_test_resource_definitions()`, which currently derives them from the gameplay resource registry. Adding a new registered resource automatically adds its exact-count field to the panel.
+- Quick buttons come from `get_developer_test_presets()`. New system-, biome-, resource-, or progression-specific test profiles can be added as preset dictionaries without editing the panel layout.
+- Standard numeric upgrade behavior is registered in `upgrade_stat_rules`. A new multiplicative stat/capacity upgrade needs a definition plus a stat-rule entry; the shared recalculation and developer UI handle its tiers automatically. Unique upgrades such as constructed infrastructure can continue using a small synchronization hook.
+- This explicit-level recalculation is intended to be reused by future save loading: a save file can restore upgrade levels and ask the scene to rebuild derived stats.
+- Developer changes currently affect only the active run and are not written to disk.
+
+## Mining Depth Gradient
+
+- `Scripts/AsteroidMining.gd` replaces the old dirt-only chocolate/red overlay, including its bright-red 1000m lava transition, with one grayscale terrain-darkening system.
+- A row-wide black overlay is drawn above both `VisualMineTiles` (foreground blocks and ores) and `BackgroundTiles` (dug/background dirt). Because the same row brightness modifies the combined terrain image, background dirt cannot remain bright when a foreground block is removed.
+- The overlay remains below the player, lander, Fuel Depot, pipes, mining effects, fog, HUD, and menus, so those elements retain their normal colors and readability.
+- `depth_darkening_enabled`, `surface_brightness`, `deep_brightness`, `depth_gradient_start`, and `depth_gradient_end` are exported tuning values on the mining scene script. The defaults fade smoothly from `1.0` brightness at the surface to `0.45` at the end of the existing `depth_distribution_full_row` range (currently 240 rows).
+- `depth_gradient_start` and `depth_gradient_end` are normalized positions within that 240-row range. The gradient clamps at `deep_brightness` below the end point.
+- Changed files: `Scripts/AsteroidMining.gd` and `README.md`.
+- Known limitation: this first pass darkens each complete terrain row uniformly rather than tinting cells individually. Foreground and background therefore share the same brightness, and no biome-specific color tint is applied.
 
 ## Placeholder Infrastructure Assets
 
@@ -140,6 +205,7 @@ This is the Codex working copy of the Godot project.
 - Run the project headless: `Godot_v4.6.3-stable_win64.exe --headless --path <project path> --quit`.
 - Run the star system scene headless: `Godot_v4.6.3-stable_win64.exe --headless --path <project path> res://Scenes/StarSystemView.tscn --quit`.
 - Run the mining scene headless: `Godot_v4.6.3-stable_win64.exe --headless --path <project path> res://Scenes/AsteroidMining.tscn --quit`.
+- Run the seeded foundation regression: `Godot_v4.6.3-stable_win64_console.exe --headless --path <project path> --script res://Tests/SeedFoundationTest.gd`.
 - In game, confirm the player starts beyond the asteroid belt, all orbiting bodies move slowly, raider markers look like hostile HUD reticles, raider clicks transfer the ship to enemy orbit before combat, and planet clicks intercept the future planet position before freezing and transitioning to mining.
 - In game, mine normal ore to confirm 2-10 unit rolls, deposit ore into the 5,000-unit Cargo Hold, process raw fuel, and build Planetary Upgrades -> Fuel Depot to confirm capacity increases to 40 tons.
 
