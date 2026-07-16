@@ -17,7 +17,7 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 
 [node name="PausePanel" type="Panel" parent="MenuRoot/CenterBox" unique_id=979466960]
-custom_minimum_size = Vector2(300, 180)
+custom_minimum_size = Vector2(340, 330)
 layout_mode = 2
 
 [node name="ButtonBox" type="VBoxContainer" parent="MenuRoot/CenterBox/PausePanel" unique_id=1721220212]
@@ -30,6 +30,65 @@ anchor_bottom = 1.0
 layout_mode = 2
 text = "Resume"
 
+[node name="SaveButton" type="Button" parent="MenuRoot/CenterBox/PausePanel/ButtonBox"]
+layout_mode = 2
+text = "Save Game"
+
+[node name="SettingsButton" type="Button" parent="MenuRoot/CenterBox/PausePanel/ButtonBox"]
+layout_mode = 2
+text = "Settings"
+
 [node name="QuitButton" type="Button" parent="MenuRoot/CenterBox/PausePanel/ButtonBox" unique_id=1260763353]
 layout_mode = 2
 text = "Quit"
+
+[node name="SaveStatusLabel" type="Label" parent="MenuRoot/CenterBox/PausePanel/ButtonBox"]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+theme_override_font_sizes/font_size = 14
+horizontal_alignment = 1
+vertical_alignment = 1
+autowrap_mode = 2
+
+[node name="SettingsPanel" type="Panel" parent="MenuRoot/CenterBox"]
+visible = false
+custom_minimum_size = Vector2(700, 390)
+layout_mode = 2
+
+[node name="SettingsBox" type="VBoxContainer" parent="MenuRoot/CenterBox/SettingsPanel"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 30.0
+offset_top = 24.0
+offset_right = -30.0
+offset_bottom = -24.0
+theme_override_constants/separation = 18
+
+[node name="Title" type="Label" parent="MenuRoot/CenterBox/SettingsPanel/SettingsBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 32
+text = "Game Settings"
+horizontal_alignment = 1
+
+[node name="MouseDirectedEToggle" type="CheckButton" parent="MenuRoot/CenterBox/SettingsPanel/SettingsBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 23
+text = "Mouse-directed E ability"
+
+[node name="MouseDirectedEDescription" type="Label" parent="MenuRoot/CenterBox/SettingsPanel/SettingsBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.78, 0.88, 0.93, 1)
+theme_override_font_sizes/font_size = 18
+text = "When enabled, E fires toward the nearest cardinal direction (up, down, left, or right) from the miner to the cursor. When disabled, E uses held input or the drill's current facing."
+autowrap_mode = 2
+
+[node name="SettingsSpacer" type="Control" parent="MenuRoot/CenterBox/SettingsPanel/SettingsBox"]
+custom_minimum_size = Vector2(0, 70)
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="BackButton" type="Button" parent="MenuRoot/CenterBox/SettingsPanel/SettingsBox"]
+layout_mode = 2
+text = "Back"

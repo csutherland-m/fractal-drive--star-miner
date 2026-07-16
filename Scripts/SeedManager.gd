@@ -265,3 +265,52 @@ func get_cargo_hauler_intro_text() -> String:
 
 func get_starting_scenario_state_name() -> String:
 	return StartingScenarioState.keys()[starting_scenario_state]
+
+
+func create_save_data() -> Dictionary:
+	return {
+		"run_seed_text": run_seed_text,
+		"current_run_seed": current_run_seed,
+		"galaxy_seed": galaxy_seed,
+		"starting_system_seed": starting_system_seed,
+		"starting_planet_seed": starting_planet_seed,
+		"starting_scenario_state": int(starting_scenario_state),
+		"cargo_hauler_intro_shown": cargo_hauler_intro_shown,
+		"starship_escape_fuel_tons": starship_escape_fuel_tons,
+		"galaxy_systems": galaxy_systems.duplicate(true),
+		"selected_system_path": selected_system_path.duplicate(),
+		"current_system_id": current_system_id,
+	}
+
+
+func apply_save_data(data: Dictionary) -> void:
+	if data.is_empty():
+		return
+	run_seed_text = str(data.get("run_seed_text", DEFAULT_SEED_TEXT))
+	current_run_seed = int(data.get("current_run_seed", stable_seed_from_text(run_seed_text)))
+	galaxy_seed = int(data.get("galaxy_seed", derive_seed(current_run_seed, "galaxy")))
+	starting_system_seed = int(data.get("starting_system_seed", derive_seed(current_run_seed, "starting_system")))
+	starting_planet_seed = int(data.get("starting_planet_seed", derive_seed(current_run_seed, "starting_planet")))
+	starting_scenario_state = clampi(
+		int(data.get("starting_scenario_state", StartingScenarioState.STARTING_STRANDED)),
+		StartingScenarioState.STARTING_STRANDED,
+		StartingScenarioState.GALAXY_MAP_UNLOCKED
+	) as StartingScenarioState
+	cargo_hauler_intro_shown = bool(data.get("cargo_hauler_intro_shown", false))
+	starship_escape_fuel_tons = maxi(int(data.get("starship_escape_fuel_tons", 0)), 0)
+	galaxy_systems.clear()
+	galaxy_systems_by_id.clear()
+	for saved_system in data.get("galaxy_systems", []):
+		if not saved_system is Dictionary:
+			continue
+		var system_data: Dictionary = saved_system.duplicate(true)
+		galaxy_systems.append(system_data)
+		galaxy_systems_by_id[str(system_data.get("system_id", ""))] = system_data
+	if galaxy_systems.is_empty():
+		generate_galaxy_structure()
+	selected_system_path.clear()
+	for system_id in data.get("selected_system_path", [STARTING_SYSTEM_ID]):
+		selected_system_path.append(str(system_id))
+	if selected_system_path.is_empty():
+		selected_system_path.append(STARTING_SYSTEM_ID)
+	current_system_id = str(data.get("current_system_id", selected_system_path[-1]))

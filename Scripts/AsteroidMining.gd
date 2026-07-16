@@ -3,23 +3,27 @@ extends Node2D
 const FogOverlayScript := preload("res://Scripts/FogOverlay.gd")
 const MiningEffectsScript := preload("res://Scripts/MiningEffects.gd")
 const DeveloperTestPanelScript := preload("res://Scripts/DeveloperTestPanel.gd")
+const MiningHudScene := preload("res://Scenes/UI/MiningHud.tscn")
 const ResourceTileTexture := preload("res://Sprites/TileSets/MiningTilesVariantsDugDirt64.png")
-const GaugeClusterTexture := preload("res://Sprites/UI/gauge_cluster_concept.png")
+const LegacyGaugeClusterTexture := preload("res://Sprites/UI/gauge_cluster_concept.png")
 const FuelDepotTexture := preload("res://Sprites/UI/fuel_depot_placeholder.png")
 const FuelStationTexture := preload("res://Sprites/UI/fuel_station_placeholder.png")
 const FuelPipeTexture := preload("res://Sprites/UI/fuel_pipe_placeholder.png")
 const FuelPipeHorizontalTexture := preload("res://Sprites/UI/fuel_pipe_horizontal_placeholder.png")
 const FuelPipeVerticalTexture := preload("res://Sprites/UI/fuel_pipe_vertical_placeholder.png")
-const GAUGE_CLUSTER_DESIGN_SIZE := Vector2(560.0, 320.0)
-const GAUGE_CLUSTER_SCALE := Vector2(0.63, 0.56)
-const GAUGE_CLUSTER_SIZE := Vector2(
-	GAUGE_CLUSTER_DESIGN_SIZE.x * GAUGE_CLUSTER_SCALE.x,
-	GAUGE_CLUSTER_DESIGN_SIZE.y * GAUGE_CLUSTER_SCALE.y
+const RadialBlastIcon := preload("res://Sprites/UI/q_radial_blast_icon.svg")
+const DirectionalBlastIcon := preload("res://Sprites/UI/e_directional_blast_icon.svg")
+const LEGACY_GAUGE_CLUSTER_DESIGN_SIZE := Vector2(560.0, 320.0)
+const LEGACY_GAUGE_CLUSTER_SCALE := Vector2(0.63, 0.56)
+const LEGACY_GAUGE_CLUSTER_SIZE := Vector2(
+	LEGACY_GAUGE_CLUSTER_DESIGN_SIZE.x * LEGACY_GAUGE_CLUSTER_SCALE.x,
+	LEGACY_GAUGE_CLUSTER_DESIGN_SIZE.y * LEGACY_GAUGE_CLUSTER_SCALE.y
 )
 const HUD_LAYER_INDEX := 5
 const SHOP_LAYER_INDEX := 10
 const TERRAIN_FOREGROUND_Z_INDEX := 8
 const PLAYER_Z_INDEX := 10
+const STANDARD_DEATH_MESSAGE := "You lose! You're a fuckin Looser, Bruhhhh"
 
 enum BlockType {
 	EMPTY,
@@ -86,6 +90,8 @@ enum BlockType {
 @export var fuel_warning_ratio: float = 0.3
 @export var mining_fuel_seconds_per_kg: float = 1.0
 @export var idle_fuel_seconds_per_kg: float = 10.0
+@export var driving_fuel_cost_multiplier: float = 0.70
+@export var mining_fuel_cost_multiplier: float = 1.10
 @export var mining_fuel_kg_per_raw_fuel: int = 200
 @export var rocket_fuel_tons_per_raw_fuel: int = 1
 @export var max_lander_mining_fuel_kg: int = 200
@@ -99,6 +105,7 @@ enum BlockType {
 @export var cargo_hold_capacity: int = 5000
 @export var ore_yield_min: int = 2
 @export var ore_yield_max: int = 10
+@export var copper_ore_frequency_multiplier: float = 1.5
 @export var shop_lander_texture_path: String = "res://Sprites/Vehicles/RocketLanderEdited.png"
 @export var shop_lander_scale: float = 0.75
 @export var shop_lander_bottom_padding_pixels: float = 14.0
@@ -106,7 +113,13 @@ enum BlockType {
 @export var miner_spawn_offset_from_lander_tiles: int = 2
 
 @export var gravity: float = 900.0
-@export var max_fall_speed: float = 500.0
+@export var max_fall_speed: float = 900.0
+@export var max_lodestone_fall_speed: float = 500.0
+@export var max_hull_health: int = 100
+@export var fall_damage_safe_distance_blocks: float = 3.0
+@export var fall_damage_block_size_pixels: float = 64.0
+@export var minimum_fall_damage: int = 10
+@export var terminal_velocity_fall_damage: int = 99
 @export var move_speed: float = 200.0
 @export var ground_acceleration: float = 650.0
 @export var air_acceleration: float = 450.0
@@ -131,6 +144,7 @@ enum BlockType {
 @export var sensor_upgrade_credit_cost: int = 15
 @export var starting_credits: int = 100
 @export var emergency_refuel_credit_cost_per_kg: int = 10
+@export var hull_repair_credit_cost_per_hp: int = 1
 @export var upgrade_resource_cost_scale: int = 10
 @export var arrival_countdown_seconds: int = 3
 @export var dirt_hardness: float = 0.735
@@ -145,6 +159,11 @@ enum BlockType {
 @export var blackholecrystals_hardness: float = 3.5
 @export var depth_hardness_increase_per_row: float = 0.1
 @export var mining_feedback_interval_seconds: float = 0.08
+@export var radial_blast_cooldown_seconds: float = 60.0
+@export var directional_blast_cooldown_seconds: float = 60.0
+@export var ability_effect_duration_seconds: float = 2.0
+@export var ability_block_removal_speed_multiplier: float = 1.5
+@export var ore_pickup_text_vertical_offset_pixels: float = 200.0
 
 var is_paused: bool = false
 var is_shop_open: bool = false
@@ -153,7 +172,9 @@ var is_game_over: bool = false
 var is_arrival_countdown_active: bool = false
 var is_on_ground: bool = false
 var player_velocity: Vector2 = Vector2.ZERO
+var hull_health: int = 100
 var last_mine_direction: Vector2i = Vector2i.DOWN
+var current_drill_facing: Vector2i = Vector2i.DOWN
 var player_animation_time: float = 0.0
 var block_types_by_cell: Dictionary = {}
 var planned_void_cells: Dictionary = {}
@@ -167,6 +188,7 @@ var lander_rocket_fuel_tons: int = 0
 var starship_mining_fuel_kg: int = 0
 var hud_label: Label
 var hud_cargo_icons: VBoxContainer
+var modular_mining_hud: MiningHud
 var gauge_cluster: Control
 var gauge_depth_label: Label
 var gauge_fuel_needle: ColorRect
@@ -176,6 +198,15 @@ var fuel_bar: Control
 var fuel_bar_fill: ColorRect
 var fuel_bar_segments: Array[ColorRect] = []
 var fuel_warning_blink_time: float = 0.0
+var hull_bar_fill: ColorRect
+var hull_health_label: Label
+var radial_blast_button: Button
+var directional_blast_button: Button
+var radial_blast_cooldown_label: Label
+var directional_blast_cooldown_label: Label
+var radial_blast_cooldown_remaining: float = 0.0
+var directional_blast_cooldown_remaining: float = 0.0
+var is_ability_effect_active: bool = false
 var shop_button: Sprite2D
 var shop_center_position: Vector2 = Vector2.ZERO
 var shop_size: Vector2 = Vector2(192.0, 64.0)
@@ -185,6 +216,7 @@ var shop_content: Control
 var shop_title_label: Label
 var lander_cargo_hold_list: VBoxContainer
 var refuel_button: Button
+var repair_hull_button: Button
 var return_to_starship_button: Button
 var return_to_starship_status_label: Label
 var fuel_processing_status_label: Label
@@ -234,6 +266,7 @@ func _ready() -> void:
 	initialize_planetary_infrastructure_hooks()
 	credits = starting_credits
 	fuel_seconds = max_fuel_seconds
+	hull_health = max_hull_health
 	starship_mining_fuel_kg = mini(starting_starship_mining_fuel_kg, max_starship_mining_fuel_kg)
 	fill_lander_mining_fuel_from_starship()
 	
@@ -252,7 +285,162 @@ func _ready() -> void:
 	update_revealed_cells()
 	update_camera()
 	update_hud()
-	show_cargo_hauler_intro_if_needed()
+	var pending_save := SaveManager.consume_pending_scene_state(scene_file_path)
+	if pending_save.is_empty():
+		show_cargo_hauler_intro_if_needed()
+	else:
+		apply_save_data(pending_save)
+		show_cargo_hauler_intro_if_needed()
+
+
+func create_save_data() -> Dictionary:
+	var terrain_cells: Array = []
+	for cell_value in block_types_by_cell.keys():
+		var cell: Vector2i = cell_value
+		var atlas := visual_mine_tiles.get_cell_atlas_coords(cell)
+		terrain_cells.append([
+			cell.x,
+			cell.y,
+			int(block_types_by_cell[cell]),
+			atlas.x,
+			atlas.y,
+			visual_mine_tiles.get_cell_alternative_tile(cell),
+		])
+	var background_cells: Array = []
+	for cell in background_tiles.get_used_cells():
+		var atlas := background_tiles.get_cell_atlas_coords(cell)
+		background_cells.append([
+			cell.x,
+			cell.y,
+			atlas.x,
+			atlas.y,
+			background_tiles.get_cell_alternative_tile(cell),
+		])
+	var revealed_cell_data: Array = []
+	for cell_value in revealed_cells.keys():
+		var cell: Vector2i = cell_value
+		revealed_cell_data.append([cell.x, cell.y])
+	var planned_void_data: Array = []
+	for cell_value in planned_void_cells.keys():
+		var cell: Vector2i = cell_value
+		planned_void_data.append([cell.x, cell.y])
+
+	return {
+		"state_version": 1,
+		"player_position": [player_marker.position.x, player_marker.position.y],
+		"player_velocity": [player_velocity.x, player_velocity.y],
+		"current_drill_facing": [current_drill_facing.x, current_drill_facing.y],
+		"fuel_seconds": fuel_seconds,
+		"hull_health": hull_health,
+		"heat_ratio": heat_ratio,
+		"credits": credits,
+		"resources": resources.duplicate(true),
+		"cargo_hold_resources": cargo_hold_resources.duplicate(true),
+		"lander_mining_fuel_kg": lander_mining_fuel_kg,
+		"lander_rocket_fuel_tons": lander_rocket_fuel_tons,
+		"starship_mining_fuel_kg": starship_mining_fuel_kg,
+		"upgrade_levels": upgrade_levels.duplicate(true),
+		"has_copper_drill_upgrade": has_copper_drill_upgrade,
+		"has_sensor_upgrade": has_sensor_upgrade,
+		"fuel_processing_active": fuel_processing_active,
+		"fuel_processing_remaining_seconds": fuel_processing_remaining_seconds,
+		"last_treasure_processing_result": last_treasure_processing_result,
+		"radial_blast_cooldown_remaining": radial_blast_cooldown_remaining,
+		"directional_blast_cooldown_remaining": directional_blast_cooldown_remaining,
+		"generated_row_count": generated_row_count,
+		"planet_generation_rng_state": str(planet_generation_rng.state),
+		"planet_core_cell": [planet_core_cell.x, planet_core_cell.y],
+		"terrain_cells": terrain_cells,
+		"background_cells": background_cells,
+		"revealed_cells": revealed_cell_data,
+		"planned_void_cells": planned_void_data,
+	}
+
+
+func apply_save_data(data: Dictionary) -> void:
+	if data.is_empty():
+		return
+	upgrade_levels = dictionary_with_string_keys(data.get("upgrade_levels", {}))
+	recalculate_stats_from_upgrade_levels()
+	resources = dictionary_with_string_keys(data.get("resources", {}))
+	cargo_hold_resources = dictionary_with_string_keys(data.get("cargo_hold_resources", {}))
+	credits = maxi(int(data.get("credits", credits)), 0)
+	fuel_seconds = clampf(float(data.get("fuel_seconds", fuel_seconds)), 0.0, max_fuel_seconds)
+	hull_health = clampi(int(data.get("hull_health", hull_health)), 0, max_hull_health)
+	heat_ratio = clampf(float(data.get("heat_ratio", heat_ratio)), 0.0, 1.0)
+	lander_mining_fuel_kg = clampi(int(data.get("lander_mining_fuel_kg", lander_mining_fuel_kg)), 0, max_lander_mining_fuel_kg)
+	lander_rocket_fuel_tons = clampi(int(data.get("lander_rocket_fuel_tons", lander_rocket_fuel_tons)), 0, max_lander_rocket_fuel_tons)
+	starship_mining_fuel_kg = clampi(int(data.get("starship_mining_fuel_kg", starship_mining_fuel_kg)), 0, max_starship_mining_fuel_kg)
+	has_copper_drill_upgrade = bool(data.get("has_copper_drill_upgrade", false))
+	has_sensor_upgrade = bool(data.get("has_sensor_upgrade", false))
+	player_marker.modulate = copper_drill_tint if has_copper_drill_upgrade else Color.WHITE
+	fuel_processing_active = bool(data.get("fuel_processing_active", false))
+	fuel_processing_remaining_seconds = maxf(float(data.get("fuel_processing_remaining_seconds", 0.0)), 0.0)
+	last_treasure_processing_result = str(data.get("last_treasure_processing_result", ""))
+	radial_blast_cooldown_remaining = maxf(float(data.get("radial_blast_cooldown_remaining", 0.0)), 0.0)
+	directional_blast_cooldown_remaining = maxf(float(data.get("directional_blast_cooldown_remaining", 0.0)), 0.0)
+
+	mine_tiles.clear()
+	visual_mine_tiles.clear()
+	background_tiles.clear()
+	block_types_by_cell.clear()
+	for entry in data.get("terrain_cells", []):
+		if not entry is Array or entry.size() < 5:
+			continue
+		var cell := Vector2i(int(entry[0]), int(entry[1]))
+		var block_type := int(entry[2])
+		var atlas := Vector2i(int(entry[3]), int(entry[4]))
+		var alternative := int(entry[5]) if entry.size() > 5 else 0
+		block_types_by_cell[cell] = block_type
+		visual_mine_tiles.set_cell(cell, tile_source_id, atlas, alternative)
+	for entry in data.get("background_cells", []):
+		if not entry is Array or entry.size() < 4:
+			continue
+		var cell := Vector2i(int(entry[0]), int(entry[1]))
+		var atlas := Vector2i(int(entry[2]), int(entry[3]))
+		var alternative := int(entry[4]) if entry.size() > 4 else 0
+		background_tiles.set_cell(cell, tile_source_id, atlas, alternative)
+	generated_row_count = maxi(int(data.get("generated_row_count", grid_height)), 0)
+	planet_generation_rng.seed = SeedManager.starting_planet_seed
+	planet_generation_rng.state = int(str(data.get("planet_generation_rng_state", planet_generation_rng.state)))
+	var saved_core: Array = data.get("planet_core_cell", [-1, -1])
+	planet_core_cell = Vector2i(int(saved_core[0]), int(saved_core[1])) if saved_core.size() >= 2 else Vector2i(-1, -1)
+	planned_void_cells.clear()
+	for entry in data.get("planned_void_cells", []):
+		if entry is Array and entry.size() >= 2:
+			planned_void_cells[Vector2i(int(entry[0]), int(entry[1]))] = true
+	revealed_cells.clear()
+	for entry in data.get("revealed_cells", []):
+		if entry is Array and entry.size() >= 2:
+			revealed_cells[Vector2i(int(entry[0]), int(entry[1]))] = true
+	var saved_position: Array = data.get("player_position", [player_marker.position.x, player_marker.position.y])
+	if saved_position.size() >= 2:
+		player_marker.position = Vector2(float(saved_position[0]), float(saved_position[1]))
+	var saved_velocity: Array = data.get("player_velocity", [0.0, 0.0])
+	if saved_velocity.size() >= 2:
+		player_velocity = Vector2(float(saved_velocity[0]), float(saved_velocity[1]))
+	var saved_facing: Array = data.get("current_drill_facing", [0, 1])
+	if saved_facing.size() >= 2:
+		current_drill_facing = Vector2i(int(saved_facing[0]), int(saved_facing[1]))
+		last_mine_direction = current_drill_facing
+	is_paused = false
+	is_shop_open = false
+	is_game_over = false
+	reset_mining_progress()
+	update_revealed_cells()
+	update_camera()
+	update_shop_ui()
+	update_hud()
+	queue_redraw()
+
+
+func dictionary_with_string_keys(value: Variant) -> Dictionary:
+	var result: Dictionary = {}
+	if not value is Dictionary:
+		return result
+	for key in value:
+		result[str(key)] = value[key]
+	return result
 
 
 func _process(delta: float) -> void:
@@ -292,6 +480,8 @@ func _physics_process(delta: float) -> void:
 		return
 	
 	handle_player_movement(delta)
+	update_mine_direction()
+	update_ability_cooldowns(delta)
 	drain_fuel_for_movement(delta)
 	update_mining_feedback_cooldown(delta)
 	update_fuel_bar(delta)
@@ -299,7 +489,6 @@ func _physics_process(delta: float) -> void:
 	ensure_world_generated_near_player()
 	update_lodestone_gravity(delta)
 	update_camera()
-	update_mine_direction()
 	try_mine_with_movement_input(delta)
 	update_player_visual(delta)
 	update_revealed_cells()
@@ -483,18 +672,20 @@ func choose_block_type_for_depth(y: int) -> BlockType:
 	var roll := planet_generation_rng.randf()
 	
 	if depth_ratio < 0.30:
-		if roll < 0.84475:
+		var copper_bonus := 0.0143 * (clampf(copper_ore_frequency_multiplier, 0.0, 5.0) - 1.0)
+		if roll < 0.84475 - copper_bonus:
 			return BlockType.DIRT
-		elif roll < 0.97725:
+		elif roll < 0.97725 - copper_bonus:
 			return BlockType.ROCK
 		elif roll < 0.99155:
 			return BlockType.COPPER
 		else:
 			return BlockType.RAWFUEL
 	elif depth_ratio < 0.65:
-		if roll < 0.701:
+		var copper_bonus := 0.0455 * (clampf(copper_ore_frequency_multiplier, 0.0, 5.0) - 1.0)
+		if roll < 0.701 - copper_bonus:
 			return BlockType.DIRT
-		elif roll < 0.896:
+		elif roll < 0.896 - copper_bonus:
 			return BlockType.ROCK
 		elif roll < 0.9415:
 			return BlockType.COPPER
@@ -507,9 +698,10 @@ func choose_block_type_for_depth(y: int) -> BlockType:
 		else:
 			return BlockType.TREASURE
 	else:
-		if roll < 0.558:
+		var copper_bonus := 0.052 * (clampf(copper_ore_frequency_multiplier, 0.0, 5.0) - 1.0)
+		if roll < 0.558 - copper_bonus:
 			return BlockType.DIRT
-		elif roll < 0.818:
+		elif roll < 0.818 - copper_bonus:
 			return BlockType.ROCK
 		elif roll < 0.87:
 			return BlockType.COPPER
@@ -783,16 +975,33 @@ func get_player_rect(test_position: Vector2) -> Rect2:
 
 
 func drain_fuel_for_movement(delta: float) -> void:
-	var fuel_drain_rate := fuel_consumption_multiplier
-	
-	if not is_movement_input_pressed():
-		fuel_drain_rate = 1.0 / maxf(idle_fuel_seconds_per_kg, 0.01)
+	var fuel_drain_rate := get_fuel_drain_rate(
+		is_actively_drilling_mineable_block(),
+		is_movement_input_pressed()
+	)
 	
 	fuel_seconds = maxf(fuel_seconds - delta * fuel_drain_rate, 0.0)
 	update_hud()
 	
 	if fuel_seconds <= 0.0:
-		trigger_game_over()
+		trigger_death()
+
+
+func get_fuel_drain_rate(is_drilling: bool, has_movement_input: bool) -> float:
+	if is_drilling:
+		return fuel_consumption_multiplier * mining_fuel_cost_multiplier
+	if has_movement_input:
+		return fuel_consumption_multiplier * driving_fuel_cost_multiplier
+	return 1.0 / maxf(idle_fuel_seconds_per_kg, 0.01)
+
+
+func is_actively_drilling_mineable_block() -> bool:
+	if get_held_mine_direction() == Vector2i.ZERO:
+		return false
+	var target_cell := get_target_mine_cell()
+	if not block_types_by_cell.has(target_cell):
+		return false
+	return block_types_by_cell.get(target_cell, BlockType.ROCK) != BlockType.LODESTONE
 
 
 func is_movement_input_pressed() -> bool:
@@ -800,6 +1009,7 @@ func is_movement_input_pressed() -> bool:
 		Input.is_key_pressed(KEY_A)
 		or Input.is_key_pressed(KEY_D)
 		or Input.is_key_pressed(KEY_W)
+		or Input.is_key_pressed(KEY_SPACE)
 		or Input.is_key_pressed(KEY_S)
 		or Input.is_key_pressed(KEY_LEFT)
 		or Input.is_key_pressed(KEY_RIGHT)
@@ -1026,7 +1236,11 @@ func get_horizontal_input() -> float:
 
 
 func is_up_thrust_pressed() -> bool:
-	return Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP)
+	return (
+		Input.is_key_pressed(KEY_W)
+		or Input.is_key_pressed(KEY_UP)
+		or Input.is_key_pressed(KEY_SPACE)
+	)
 
 
 func move_player_on_axis(motion: Vector2) -> void:
@@ -1047,10 +1261,43 @@ func move_player_on_axis(motion: Vector2) -> void:
 			if step.y != 0.0:
 				if step.y > 0.0:
 					is_on_ground = true
+					apply_landing_impact(player_velocity.y)
 				player_velocity.y = 0.0
 			return
 		
 		player_marker.position = next_position
+
+
+func get_fall_damage_for_impact_speed(impact_speed: float) -> int:
+	var minimum_damage_speed := get_fall_damage_start_speed()
+	if impact_speed < minimum_damage_speed:
+		return 0
+	var damage_ratio := inverse_lerp(minimum_damage_speed, max_fall_speed, impact_speed)
+	return roundi(lerpf(
+		float(minimum_fall_damage),
+		float(terminal_velocity_fall_damage),
+		clampf(damage_ratio, 0.0, 1.0)
+	))
+
+
+func get_fall_damage_start_speed() -> float:
+	var safe_fall_distance := maxf(fall_damage_safe_distance_blocks, 0.0) * maxf(
+		fall_damage_block_size_pixels,
+		0.0
+	)
+	return sqrt(2.0 * maxf(gravity, 0.0) * safe_fall_distance)
+
+
+func apply_landing_impact(impact_speed: float) -> void:
+	var damage := get_fall_damage_for_impact_speed(impact_speed)
+	if damage <= 0:
+		return
+	hull_health = maxi(hull_health - damage, 0)
+	if mining_effects != null:
+		mining_effects.add_screen_shake(clampf(float(damage) / 8.0, 3.0, 13.0), 0.25)
+	update_hud()
+	if hull_health <= 0:
+		trigger_death()
 
 
 func is_player_colliding_at(test_position: Vector2) -> bool:
@@ -1095,6 +1342,7 @@ func update_mine_direction() -> void:
 		return
 	
 	last_mine_direction = held_direction
+	current_drill_facing = held_direction
 
 
 func get_held_mine_direction() -> Vector2i:
@@ -1108,6 +1356,166 @@ func get_held_mine_direction() -> Vector2i:
 	return Vector2i.ZERO
 
 
+func get_directional_blast_direction() -> Vector2i:
+	if GameSettings.mouse_directed_e_enabled:
+		return get_cardinal_direction_toward_cursor()
+	# Up remains a valid blast direction even though W/up is normally the miner's thrust control.
+	if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP) or Input.is_key_pressed(KEY_SPACE):
+		return Vector2i.UP
+	if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN):
+		return Vector2i.DOWN
+	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT):
+		return Vector2i.LEFT
+	if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT):
+		return Vector2i.RIGHT
+	return current_drill_facing if current_drill_facing != Vector2i.ZERO else Vector2i.DOWN
+
+
+func get_cardinal_direction_toward_cursor() -> Vector2i:
+	return get_nearest_cardinal_direction(
+		get_global_mouse_position() - player_marker.global_position,
+		current_drill_facing
+	)
+
+
+func get_nearest_cardinal_direction(offset: Vector2, fallback: Vector2i = Vector2i.DOWN) -> Vector2i:
+	if offset.length_squared() <= 0.0001:
+		return fallback if fallback != Vector2i.ZERO else Vector2i.DOWN
+	if absf(offset.x) > absf(offset.y):
+		return Vector2i.RIGHT if offset.x > 0.0 else Vector2i.LEFT
+	return Vector2i.DOWN if offset.y > 0.0 else Vector2i.UP
+
+
+func get_radial_blast_target_cells() -> Array[Vector2i]:
+	var target_cells: Array[Vector2i] = []
+	var player_cell := get_player_cell()
+	generate_rows_until(player_cell.y + 2)
+	for y_offset in range(-1, 2):
+		for x_offset in range(-1, 2):
+			var target_cell := player_cell + Vector2i(x_offset, y_offset)
+			if is_ability_mineable_cell(target_cell):
+				target_cells.append(target_cell)
+	return target_cells
+
+
+func get_directional_blast_target_cells(direction: Vector2i = Vector2i.ZERO) -> Array[Vector2i]:
+	var target_cells: Array[Vector2i] = []
+	var blast_direction := direction if direction != Vector2i.ZERO else get_directional_blast_direction()
+	var player_cell := get_player_cell()
+	if blast_direction == Vector2i.DOWN:
+		generate_rows_until(player_cell.y + 4)
+	for distance in range(1, 4):
+		var target_cell := player_cell + blast_direction * distance
+		if is_ability_mineable_cell(target_cell):
+			target_cells.append(target_cell)
+	return target_cells
+
+
+func is_ability_mineable_cell(cell: Vector2i) -> bool:
+	if cell.x < 0 or cell.x >= grid_width or cell.y < 0:
+		return false
+	return (
+		block_types_by_cell.has(cell)
+		and block_types_by_cell.get(cell, BlockType.ROCK) != BlockType.LODESTONE
+	)
+
+
+func try_activate_radial_blast() -> void:
+	if not can_activate_ability(radial_blast_cooldown_remaining, 0.0):
+		return
+	var target_cells := get_radial_blast_target_cells()
+	if target_cells.is_empty():
+		return
+	radial_blast_cooldown_remaining = radial_blast_cooldown_seconds
+	_run_blast_ability(target_cells)
+	update_ability_buttons()
+
+
+func try_activate_directional_blast() -> void:
+	if not can_activate_ability(directional_blast_cooldown_remaining, 0.0):
+		return
+	var target_cells := get_directional_blast_target_cells()
+	if target_cells.is_empty():
+		return
+	directional_blast_cooldown_remaining = directional_blast_cooldown_seconds
+	_run_blast_ability(target_cells)
+	update_hud()
+
+
+func can_activate_ability(cooldown_remaining: float, fuel_cost: float) -> bool:
+	return (
+		not is_paused
+		and not is_shop_open
+		and not is_game_over
+		and not is_arrival_countdown_active
+		and not is_ability_effect_active
+		and cooldown_remaining <= 0.0
+		and fuel_seconds >= fuel_cost
+	)
+
+
+func _run_blast_ability(target_cells: Array[Vector2i]) -> void:
+	is_ability_effect_active = true
+	reset_mining_progress()
+	var effect_positions: Array[Vector2] = []
+	for target_cell in target_cells:
+		effect_positions.append(mine_tiles.map_to_local(target_cell))
+	if mining_effects != null:
+		mining_effects.play_ability_explosion(effect_positions, ability_effect_duration_seconds)
+
+	var block_removal_delay := get_ability_block_removal_delay()
+	await get_tree().create_timer(block_removal_delay).timeout
+	if not is_inside_tree():
+		return
+
+	mine_blast_target_cells(target_cells)
+
+	await get_tree().create_timer(maxf(ability_effect_duration_seconds - block_removal_delay, 0.0)).timeout
+	if not is_inside_tree():
+		return
+	is_ability_effect_active = false
+	update_ability_buttons()
+
+
+func get_ability_block_removal_delay() -> float:
+	var previous_removal_delay := ability_effect_duration_seconds * 0.55
+	return previous_removal_delay / maxf(ability_block_removal_speed_multiplier, 0.01)
+
+
+func mine_blast_target_cells(target_cells: Array[Vector2i]) -> Dictionary:
+	var captured_resources: Dictionary = {}
+	var captured_pickups: Array[Dictionary] = []
+	for target_cell in target_cells:
+		var result := mine_target_cell(target_cell, false)
+		var amount := int(result.get("amount", 0))
+		if amount <= 0:
+			continue
+		var resource_name := str(result.get("resource_name", "Ore"))
+		var block_type: BlockType = result.get("block_type", BlockType.EMPTY)
+		captured_pickups.append({
+			"resource_name": resource_name,
+			"amount": amount,
+			"block_type": block_type,
+		})
+		captured_resources[resource_name] = int(captured_resources.get(resource_name, 0)) + amount
+	for pickup_index in captured_pickups.size():
+		var pickup: Dictionary = captured_pickups[pickup_index]
+		var centered_index := float(pickup_index) - float(captured_pickups.size() - 1) * 0.5
+		play_blast_ore_text(
+			str(pickup["resource_name"]),
+			int(pickup["amount"]),
+			pickup["block_type"],
+			centered_index * 30.0
+		)
+	return captured_resources
+
+
+func update_ability_cooldowns(delta: float) -> void:
+	radial_blast_cooldown_remaining = maxf(radial_blast_cooldown_remaining - delta, 0.0)
+	directional_blast_cooldown_remaining = maxf(directional_blast_cooldown_remaining - delta, 0.0)
+	update_ability_buttons()
+
+
 func update_player_visual(delta: float) -> void:
 	var held_direction := get_held_mine_direction()
 	var visual_direction := last_mine_direction
@@ -1119,6 +1527,7 @@ func update_player_visual(delta: float) -> void:
 		visual_direction = Vector2i.RIGHT if player_velocity.x > 0.0 else Vector2i.LEFT
 	elif absf(player_velocity.y) > 5.0:
 		visual_direction = Vector2i.DOWN if player_velocity.y > 0.0 else Vector2i.UP
+	current_drill_facing = visual_direction
 	
 	if is_animating:
 		player_animation_time += delta
@@ -1204,16 +1613,16 @@ func reset_mining_progress() -> void:
 	update_hud()
 
 
-func mine_target_cell(target_cell: Vector2i) -> void:
+func mine_target_cell(target_cell: Vector2i, play_feedback: bool = true) -> Dictionary:
 	if not block_types_by_cell.has(target_cell):
-		return
+		return {}
 	
 	var block_type: BlockType = block_types_by_cell.get(target_cell, BlockType.ROCK)
 	var resource_name := get_resource_name_for_block_type(block_type)
 	
 	if is_inventory_resource(resource_name) and get_inventory_room() <= 0:
 		update_hud()
-		return
+		return {}
 	
 	visual_mine_tiles.erase_cell(target_cell)
 	block_types_by_cell.erase(target_cell)
@@ -1223,11 +1632,16 @@ func mine_target_cell(target_cell: Vector2i) -> void:
 		var amount_to_add: int = mini(yield_amount, get_inventory_room())
 		resources[resource_name] = int(resources.get(resource_name, 0)) + amount_to_add
 		print("Mined %s: +%d" % [resource_name, amount_to_add])
-		play_block_mined_feedback(target_cell, resource_name, amount_to_add)
+		if play_feedback:
+			play_block_mined_feedback(target_cell, resource_name, amount_to_add, block_type)
+		update_hud()
+		return {"resource_name": resource_name, "amount": amount_to_add, "block_type": block_type}
 	else:
-		play_block_mined_feedback(target_cell, resource_name, 0)
+		if play_feedback:
+			play_block_mined_feedback(target_cell, resource_name, 0)
 	
 	update_hud()
+	return {"resource_name": resource_name, "amount": 0}
 
 
 func update_mining_feedback_cooldown(delta: float) -> void:
@@ -1246,12 +1660,44 @@ func play_mining_feedback_if_ready(target_cell: Vector2i) -> void:
 	mining_feedback_cooldown = mining_feedback_interval_seconds
 
 
-func play_block_mined_feedback(target_cell: Vector2i, resource_name: String, amount: int) -> void:
+func play_block_mined_feedback(
+	target_cell: Vector2i,
+	resource_name: String,
+	amount: int,
+	block_type: BlockType = BlockType.EMPTY
+) -> void:
 	if mining_effects == null:
 		return
 	
 	var target_position := mine_tiles.map_to_local(target_cell)
-	mining_effects.play_block_mined(target_position, resource_name, amount)
+	var roll_min := ore_yield_min if is_variable_yield_ore_block(block_type) else 0
+	var roll_max := ore_yield_max if is_variable_yield_ore_block(block_type) else 0
+	mining_effects.play_block_mined(target_position, resource_name, amount, roll_min, roll_max)
+
+
+func play_blast_ore_text(
+	resource_name: String,
+	amount: int,
+	block_type: BlockType,
+	vertical_list_offset: float = 0.0
+) -> void:
+	if mining_effects == null or amount <= 0:
+		return
+	var roll_min := ore_yield_min if is_variable_yield_ore_block(block_type) else 0
+	var roll_max := ore_yield_max if is_variable_yield_ore_block(block_type) else 0
+	mining_effects.play_ore_pickup_text(
+		get_safe_ore_pickup_text_position() + Vector2(0.0, vertical_list_offset),
+		resource_name,
+		amount,
+		roll_min,
+		roll_max
+	)
+
+
+func get_safe_ore_pickup_text_position() -> Vector2:
+	var screen_position := get_viewport_rect().size * 0.5
+	screen_position.y -= ore_pickup_text_vertical_offset_pixels
+	return mine_tiles.get_canvas_transform().affine_inverse() * screen_position
 
 
 func update_lodestone_gravity(delta: float) -> void:
@@ -1260,7 +1706,7 @@ func update_lodestone_gravity(delta: float) -> void:
 		lodestone_fall_distance = 0.0
 		return
 	
-	lodestone_fall_speed = minf(lodestone_fall_speed + gravity * delta, max_fall_speed)
+	lodestone_fall_speed = minf(lodestone_fall_speed + gravity * delta, max_lodestone_fall_speed)
 	lodestone_fall_distance += lodestone_fall_speed * delta
 	
 	var tile_height := 64.0
@@ -1397,6 +1843,13 @@ func get_total_sellable_resource_count() -> int:
 	var count := 0
 	for resource_name in get_sellable_resource_names():
 		count += get_total_resource_count(resource_name)
+	return count
+
+
+func get_lander_sellable_resource_count() -> int:
+	var count := 0
+	for resource_name in get_sellable_resource_names():
+		count += int(cargo_hold_resources.get(resource_name, 0))
 	return count
 
 
@@ -1723,6 +2176,7 @@ func clear_shop_content() -> void:
 		return
 	
 	lander_cargo_hold_list = null
+	repair_hull_button = null
 	return_to_starship_button = null
 	return_to_starship_status_label = null
 	fuel_processing_status_label = null
@@ -1747,6 +2201,7 @@ func show_shop_main_view() -> void:
 	top_row.add_child(fuel_action_column)
 	
 	refuel_button = add_shop_button(fuel_action_column, get_refuel_button_text(), Callable(self, "_on_refuel_pressed"))
+	repair_hull_button = add_shop_button(fuel_action_column, get_repair_hull_button_text(), Callable(self, "_on_repair_hull_pressed"))
 	return_to_starship_status_label = Label.new()
 	return_to_starship_status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	return_to_starship_status_label.add_theme_font_size_override("font_size", 14)
@@ -1877,19 +2332,32 @@ func show_market_view() -> void:
 	sell_column.add_theme_constant_override("separation", 10)
 	market_columns.add_child(sell_column)
 	
-	if get_total_sellable_resource_count() > 0:
+	if get_lander_sellable_resource_count() > 0:
 		add_shop_button(sell_column, "Sell All", Callable(self, "_on_sell_all_pressed"))
-		
+
 		for resource_name in get_sellable_resource_names():
-			if get_total_resource_count(resource_name) <= 0:
+			var lander_count: int = int(cargo_hold_resources.get(resource_name, 0))
+			if lander_count <= 0:
 				continue
-			
-			var button := add_shop_button(
-				sell_column,
-				"Sell %s" % resource_name,
-				Callable(self, "sell_resource").bind(resource_name)
-			)
-			apply_individual_sell_button_style(button)
+
+			var sell_row := HBoxContainer.new()
+			sell_row.custom_minimum_size.y = 38.0
+			sell_row.add_theme_constant_override("separation", 4)
+			sell_column.add_child(sell_row)
+
+			var resource_label := Label.new()
+			resource_label.text = "%s x%d" % [resource_name, lander_count]
+			resource_label.tooltip_text = resource_name
+			resource_label.custom_minimum_size.x = 118.0
+			resource_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			resource_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+			resource_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+			resource_label.add_theme_font_size_override("font_size", 13)
+			sell_row.add_child(resource_label)
+
+			add_compact_sell_button(sell_row, "Sell", Callable(self, "sell_resource").bind(resource_name, 1))
+			add_compact_sell_button(sell_row, "10", Callable(self, "sell_resource").bind(resource_name, 10))
+			add_compact_sell_button(sell_row, "All", Callable(self, "sell_resource").bind(resource_name, -1))
 	else:
 		var empty_sell_label := Label.new()
 		empty_sell_label.text = "No resources to sell"
@@ -2166,6 +2634,38 @@ func get_refuel_button_text() -> String:
 	return "Refuel\n%d Credits" % get_emergency_refuel_credit_cost(needed_kg)
 
 
+func get_missing_hull_health() -> int:
+	return maxi(max_hull_health - hull_health, 0)
+
+
+func get_full_hull_repair_credit_cost() -> int:
+	return get_missing_hull_health() * maxi(hull_repair_credit_cost_per_hp, 0)
+
+
+func get_repair_hull_button_text() -> String:
+	var missing_health := get_missing_hull_health()
+	if missing_health <= 0:
+		return "Repair Ship Hull\nHull at 100 HP"
+	return "Repair Ship Hull\n+%d HP / %d Credits" % [
+		missing_health,
+		get_full_hull_repair_credit_cost(),
+	]
+
+
+func can_afford_full_hull_repair() -> bool:
+	return get_missing_hull_health() > 0 and credits >= get_full_hull_repair_credit_cost()
+
+
+func _on_repair_hull_pressed() -> void:
+	if not can_afford_full_hull_repair():
+		update_shop_ui()
+		return
+	credits -= get_full_hull_repair_credit_cost()
+	hull_health = max_hull_health
+	update_shop_ui()
+	update_hud()
+
+
 func fill_lander_mining_fuel_from_starship() -> void:
 	var lander_fuel_room: int = maxi(max_lander_mining_fuel_kg - lander_mining_fuel_kg, 0)
 	var transfer_kg: int = mini(lander_fuel_room, starship_mining_fuel_kg)
@@ -2212,6 +2712,10 @@ func update_shop_ui() -> void:
 			refuel_kg <= 0
 			or (lander_mining_fuel_kg <= 0 and credits < emergency_refuel_credit_cost_per_kg)
 		)
+
+	if repair_hull_button != null:
+		repair_hull_button.text = get_repair_hull_button_text()
+		repair_hull_button.disabled = not can_afford_full_hull_repair()
 	
 	if return_to_starship_status_label != null:
 		return_to_starship_status_label.text = get_return_to_starship_status_text()
@@ -2226,9 +2730,11 @@ func update_shop_ui() -> void:
 		treasure_processing_status_label.text = get_treasure_processing_status_text()
 	
 	shop_status_label.text = (
-		"Credits: %d   Cargo: %d / %d   Cargo Hold: %d / %d units\nMining Fuel: %d / %d kg   Rocket Fuel: %d / %d tons   Starship Mining Fuel: %d / %d kg"
+		"Credits: %d   Hull: %d / %d HP   Cargo: %d / %d   Cargo Hold: %d / %d units\nMining Fuel: %d / %d kg   Rocket Fuel: %d / %d tons   Starship Mining Fuel: %d / %d kg"
 		% [
 			credits,
+			hull_health,
+			max_hull_health,
 			get_inventory_count(),
 			inventory_capacity,
 			get_cargo_hold_count(),
@@ -2347,15 +2853,29 @@ func get_sellable_resource_names() -> Array[String]:
 	]
 
 
-func sell_resource(resource_name: String) -> void:
-	var count: int = get_total_resource_count(resource_name)
+func add_compact_sell_button(parent: Control, text_value: String, callback: Callable) -> Button:
+	var button := Button.new()
+	button.text = text_value
+	button.custom_minimum_size = Vector2(48.0, 38.0)
+	button.size_flags_horizontal = Control.SIZE_SHRINK_END
+	button.pressed.connect(callback)
+	parent.add_child(button)
+	apply_individual_sell_button_style(button)
+	return button
+
+
+func sell_resource(resource_name: String, requested_amount: int = 1) -> void:
+	var lander_count: int = int(cargo_hold_resources.get(resource_name, 0))
 	
-	if count <= 0:
+	if lander_count <= 0:
 		return
-	
-	credits += count * get_resource_value(resource_name)
-	resources[resource_name] = 0
-	cargo_hold_resources[resource_name] = 0
+
+	var amount_to_sell := lander_count if requested_amount < 0 else mini(lander_count, maxi(requested_amount, 0))
+	if amount_to_sell <= 0:
+		return
+
+	credits += amount_to_sell * get_resource_value(resource_name)
+	cargo_hold_resources[resource_name] = lander_count - amount_to_sell
 	refresh_lander_view_or_shop_ui()
 	update_hud()
 
@@ -2566,12 +3086,12 @@ func _on_deposit_all_pressed() -> void:
 
 func _on_sell_all_pressed() -> void:
 	for resource_name in get_sellable_resource_names():
-		var count: int = get_total_resource_count(resource_name)
-		if count > 0:
-			credits += count * get_resource_value(resource_name)
-			resources[resource_name] = 0
-			cargo_hold_resources[resource_name] = 0
-	
+		var lander_count: int = int(cargo_hold_resources.get(resource_name, 0))
+		if lander_count <= 0:
+			continue
+		credits += lander_count * get_resource_value(resource_name)
+		cargo_hold_resources[resource_name] = 0
+
 	refresh_lander_view_or_shop_ui()
 	update_hud()
 
@@ -2702,7 +3222,7 @@ func create_game_over_ui() -> void:
 	game_over_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	game_over_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	game_over_label.add_theme_font_size_override("font_size", 34)
-	game_over_label.text = "You lose! You're a fuckin Looser, Bruhhhh"
+	game_over_label.text = STANDARD_DEATH_MESSAGE
 	game_over_label.visible = false
 	game_over_layer.add_child(game_over_label)
 
@@ -2751,28 +3271,42 @@ func start_arrival_countdown() -> void:
 	is_arrival_countdown_active = false
 
 
-func trigger_game_over() -> void:
+func trigger_death() -> void:
 	if is_game_over:
 		return
-	
+
 	is_game_over = true
 	is_arrival_countdown_active = false
 	is_shop_open = false
 	is_paused = true
 	player_velocity = Vector2.ZERO
 	reset_mining_progress()
-	
+
 	if shop_panel != null:
 		shop_panel.visible = false
-	
 	if countdown_label != null:
 		countdown_label.visible = false
-	
 	if game_over_label != null:
+		game_over_label.text = STANDARD_DEATH_MESSAGE
 		game_over_label.visible = true
-	
-	await get_tree().create_timer(2.5).timeout
-	get_tree().change_scene_to_file("res://Scenes/main_game_menu.tscn")
+		game_over_label.pivot_offset = game_over_label.size * 0.5
+		game_over_label.scale = Vector2(0.35, 0.35)
+		game_over_label.modulate = Color(1.0, 0.12, 0.08, 0.0)
+		var entrance_tween := create_tween()
+		entrance_tween.set_parallel(true)
+		entrance_tween.tween_property(game_over_label, "scale", Vector2.ONE, 0.65).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		entrance_tween.tween_property(game_over_label, "modulate:a", 1.0, 0.45)
+
+	await get_tree().create_timer(2.2).timeout
+	if not is_inside_tree():
+		return
+	if game_over_label != null:
+		var exit_tween := create_tween()
+		exit_tween.tween_property(game_over_label, "modulate:a", 0.0, 0.45)
+		await exit_tween.finished
+
+	SeedManager.start_new_run()
+	get_tree().change_scene_to_file("res://Scenes/AsteroidMining.tscn")
 
 
 func trigger_victory() -> void:
@@ -2816,51 +3350,236 @@ func create_hud() -> void:
 	hud_layer.name = "MiningHUD"
 	hud_layer.layer = HUD_LAYER_INDEX
 	add_child(hud_layer)
-	
-	var fuel_bar_label := Label.new()
-	fuel_bar_label.text = "Fuel"
-	fuel_bar_label.position = Vector2(24.0, 14.0)
-	fuel_bar_label.add_theme_font_size_override("font_size", 18)
-	hud_layer.add_child(fuel_bar_label)
-	
-	fuel_bar = Control.new()
-	fuel_bar.name = "FuelBar"
-	fuel_bar.anchor_left = 0.0
-	fuel_bar.anchor_right = 1.0
-	fuel_bar.offset_left = 82.0
-	fuel_bar.offset_right = -24.0
-	fuel_bar.offset_top = 12.0
-	fuel_bar.offset_bottom = 34.0
-	fuel_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	hud_layer.add_child(fuel_bar)
-	
-	var fuel_bar_background := ColorRect.new()
-	fuel_bar_background.name = "FuelBarBackground"
-	fuel_bar_background.color = Color(0.02, 0.05, 0.06, 0.82)
-	fuel_bar_background.anchor_right = 1.0
-	fuel_bar_background.anchor_bottom = 1.0
-	fuel_bar.add_child(fuel_bar_background)
-	
-	fuel_bar_fill = ColorRect.new()
-	fuel_bar_fill.name = "FuelBarFill"
-	fuel_bar_fill.color = Color(0.0, 0.75, 0.86, 0.95)
-	fuel_bar_fill.offset_left = 2.0
-	fuel_bar_fill.offset_top = 2.0
-	fuel_bar_fill.offset_bottom = -2.0
-	fuel_bar.add_child(fuel_bar_fill)
-	rebuild_fuel_bar_segments()
+
+	modular_mining_hud = MiningHudScene.instantiate() as MiningHud
+	modular_mining_hud.name = "ModularMiningHUD"
+	modular_mining_hud.anchor_top = 1.0
+	modular_mining_hud.anchor_bottom = 1.0
+	modular_mining_hud.offset_left = 8.0
+	modular_mining_hud.offset_right = 8.0 + MiningHud.DISPLAY_SIZE.x
+	modular_mining_hud.offset_top = -MiningHud.DISPLAY_SIZE.y - 8.0
+	modular_mining_hud.offset_bottom = -8.0
+	hud_layer.add_child(modular_mining_hud)
+	modular_mining_hud.radial_blast_requested.connect(try_activate_radial_blast)
+	modular_mining_hud.directional_blast_requested.connect(try_activate_directional_blast)
+	radial_blast_button = modular_mining_hud.radial_button
+	directional_blast_button = modular_mining_hud.directional_button
+	radial_blast_cooldown_label = modular_mining_hud.radial_cooldown_label
+	directional_blast_cooldown_label = modular_mining_hud.directional_cooldown_label
+	gauge_cluster = modular_mining_hud
+	gauge_fuel_needle = modular_mining_hud.fuel_needle
 	
 	hud_label = Label.new()
-	hud_label.position = Vector2(24, 52)
+	hud_label.position = Vector2(24, 24)
 	hud_label.add_theme_font_size_override("font_size", 24)
 	hud_layer.add_child(hud_label)
 	
+	var cargo_center := CenterContainer.new()
+	cargo_center.name = "CenteredMinerCargo"
+	cargo_center.anchor_top = 0.0
+	cargo_center.anchor_bottom = 1.0
+	cargo_center.offset_left = 18.0
+	cargo_center.offset_right = 170.0
+	cargo_center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud_layer.add_child(cargo_center)
+
 	hud_cargo_icons = VBoxContainer.new()
-	hud_cargo_icons.position = Vector2(24.0, 122.0)
-	hud_cargo_icons.add_theme_constant_override("separation", 6)
-	hud_layer.add_child(hud_cargo_icons)
+	hud_cargo_icons.name = "MinerCargoList"
+	hud_cargo_icons.add_theme_constant_override("separation", 3)
+	hud_cargo_icons.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cargo_center.add_child(hud_cargo_icons)
 	
-	create_gauge_cluster(hud_layer)
+	update_fuel_bar()
+	update_hull_health_bar()
+	update_gauge_cluster()
+	update_ability_buttons()
+
+
+func create_hull_health_bar(hud_layer: CanvasLayer) -> void:
+	var hull_label := Label.new()
+	hull_label.text = "Hull"
+	hull_label.anchor_top = 1.0
+	hull_label.anchor_bottom = 1.0
+	hull_label.offset_left = 24.0
+	hull_label.offset_right = 78.0
+	hull_label.offset_top = -322.0
+	hull_label.offset_bottom = -296.0
+	hull_label.add_theme_font_size_override("font_size", 18)
+	hud_layer.add_child(hull_label)
+
+	var hull_bar := Control.new()
+	hull_bar.name = "HullHealthBar"
+	hull_bar.anchor_top = 1.0
+	hull_bar.anchor_bottom = 1.0
+	hull_bar.offset_left = 82.0
+	hull_bar.offset_right = 482.0
+	hull_bar.offset_top = -320.0
+	hull_bar.offset_bottom = -298.0
+	hull_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud_layer.add_child(hull_bar)
+
+	var hull_background := ColorRect.new()
+	hull_background.color = Color(0.08, 0.025, 0.025, 0.88)
+	hull_background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	hull_bar.add_child(hull_background)
+
+	hull_bar_fill = ColorRect.new()
+	hull_bar_fill.position = Vector2(2.0, 2.0)
+	hull_bar_fill.size = Vector2(396.0, 18.0)
+	hull_bar.add_child(hull_bar_fill)
+
+	hull_health_label = Label.new()
+	hull_health_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	hull_health_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hull_health_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	hull_health_label.add_theme_font_size_override("font_size", 14)
+	hull_health_label.add_theme_color_override("font_shadow_color", Color.BLACK)
+	hull_health_label.add_theme_constant_override("shadow_offset_x", 1)
+	hull_health_label.add_theme_constant_override("shadow_offset_y", 1)
+	hull_bar.add_child(hull_health_label)
+	update_hull_health_bar()
+
+
+func update_hull_health_bar() -> void:
+	if modular_mining_hud != null:
+		modular_mining_hud.set_hull(hull_health, max_hull_health)
+		return
+	if hull_bar_fill == null or hull_health_label == null:
+		return
+	var health_ratio := clampf(float(hull_health) / maxf(float(max_hull_health), 1.0), 0.0, 1.0)
+	hull_bar_fill.size.x = 396.0 * health_ratio
+	hull_bar_fill.color = Color(0.15, 0.86, 0.34, 0.95).lerp(Color(0.95, 0.08, 0.04, 0.98), 1.0 - health_ratio)
+	hull_health_label.text = "%d / %d HP" % [hull_health, max_hull_health]
+
+
+func create_ability_hud(hud_layer: CanvasLayer) -> void:
+	var ability_buttons := HBoxContainer.new()
+	ability_buttons.name = "MiningAbilities"
+	ability_buttons.anchor_left = 0.0
+	ability_buttons.anchor_right = 0.0
+	ability_buttons.anchor_top = 1.0
+	ability_buttons.anchor_bottom = 1.0
+	ability_buttons.offset_left = 112.0
+	ability_buttons.offset_right = 272.0
+	ability_buttons.offset_top = -292.0
+	ability_buttons.offset_bottom = -187.0
+	ability_buttons.add_theme_constant_override("separation", 16)
+	ability_buttons.theme = GameTheme.create_button_theme()
+	hud_layer.add_child(ability_buttons)
+
+	var radial_stack := VBoxContainer.new()
+	radial_stack.custom_minimum_size = Vector2(64.0, 0.0)
+	radial_stack.add_theme_constant_override("separation", 1)
+	ability_buttons.add_child(radial_stack)
+	var radial_key_label := create_ability_key_label("Q")
+	radial_stack.add_child(radial_key_label)
+
+	radial_blast_button = Button.new()
+	radial_blast_button.name = "RadialBlastButton"
+	radial_blast_button.custom_minimum_size = Vector2(64.0, 64.0)
+	radial_blast_button.icon = RadialBlastIcon
+	radial_blast_button.expand_icon = true
+	radial_blast_button.tooltip_text = "Mine every mineable block within one tile of the miner."
+	radial_blast_button.pressed.connect(try_activate_radial_blast)
+	apply_compact_ability_button_style(radial_blast_button)
+	radial_stack.add_child(radial_blast_button)
+	radial_blast_cooldown_label = create_ability_cooldown_label()
+	radial_stack.add_child(radial_blast_cooldown_label)
+
+	var directional_stack := VBoxContainer.new()
+	directional_stack.custom_minimum_size = Vector2(64.0, 0.0)
+	directional_stack.add_theme_constant_override("separation", 1)
+	ability_buttons.add_child(directional_stack)
+	var directional_key_label := create_ability_key_label("E")
+	directional_stack.add_child(directional_key_label)
+
+	directional_blast_button = Button.new()
+	directional_blast_button.name = "DirectionalBlastButton"
+	directional_blast_button.custom_minimum_size = Vector2(64.0, 64.0)
+	directional_blast_button.icon = DirectionalBlastIcon
+	directional_blast_button.expand_icon = true
+	directional_blast_button.tooltip_text = "Mine the next three blocks in the drill's facing direction."
+	directional_blast_button.pressed.connect(try_activate_directional_blast)
+	apply_compact_ability_button_style(directional_blast_button)
+	directional_stack.add_child(directional_blast_button)
+	directional_blast_cooldown_label = create_ability_cooldown_label()
+	directional_stack.add_child(directional_blast_cooldown_label)
+
+	update_ability_buttons()
+
+
+func create_ability_key_label(key_text: String) -> Label:
+	var label := Label.new()
+	label.text = key_text
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", 18)
+	label.add_theme_color_override("font_color", Color(0.92, 0.97, 1.0, 1.0))
+	return label
+
+
+func create_ability_cooldown_label() -> Label:
+	var label := Label.new()
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", 11)
+	label.add_theme_color_override("font_color", Color(0.72, 0.84, 0.9, 1.0))
+	return label
+
+
+func apply_compact_ability_button_style(button: Button) -> void:
+	button.add_theme_stylebox_override("normal", create_compact_ability_style(Color("#A9D7E8")))
+	button.add_theme_stylebox_override("hover", create_compact_ability_style(Color("#D4F3FF")))
+	button.add_theme_stylebox_override("pressed", create_compact_ability_style(Color("#6F9FB4")))
+	button.add_theme_stylebox_override("disabled", create_compact_ability_style(Color("#52636C")))
+
+
+func create_compact_ability_style(background_color: Color) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = background_color
+	style.border_color = Color("#526F82")
+	style.set_border_width_all(2)
+	style.set_corner_radius_all(5)
+	style.set_content_margin_all(3.0)
+	return style
+
+
+func update_ability_buttons() -> void:
+	if modular_mining_hud != null:
+		var globally_disabled := is_paused or is_shop_open or is_game_over or is_ability_effect_active
+		modular_mining_hud.set_ability_states(
+			radial_blast_cooldown_remaining,
+			radial_blast_cooldown_seconds,
+			directional_blast_cooldown_remaining,
+			directional_blast_cooldown_seconds,
+			globally_disabled,
+			GameSettings.mouse_directed_e_enabled
+		)
+		return
+	if radial_blast_button == null or directional_blast_button == null:
+		return
+	var globally_disabled := is_paused or is_shop_open or is_game_over or is_ability_effect_active
+	radial_blast_button.text = ""
+	radial_blast_button.disabled = globally_disabled or radial_blast_cooldown_remaining > 0.0
+	directional_blast_button.text = ""
+	directional_blast_button.disabled = (
+		globally_disabled
+		or directional_blast_cooldown_remaining > 0.0
+	)
+	if radial_blast_cooldown_label != null:
+		radial_blast_cooldown_label.text = format_ability_cooldown(radial_blast_cooldown_remaining)
+	if directional_blast_cooldown_label != null:
+		directional_blast_cooldown_label.text = format_ability_cooldown(directional_blast_cooldown_remaining)
+	directional_blast_button.tooltip_text = (
+		"Mouse-directed three-block blast."
+		if GameSettings.mouse_directed_e_enabled
+		else "Drill-facing three-block blast."
+	)
+
+
+func format_ability_cooldown(seconds_remaining: float) -> String:
+	if seconds_remaining <= 0.0:
+		return "READY"
+	var whole_seconds := ceili(seconds_remaining)
+	return "%d:%02d" % [floori(float(whole_seconds) / 60.0), whole_seconds % 60]
 
 
 func create_gauge_cluster(hud_layer: CanvasLayer) -> void:
@@ -2871,19 +3590,19 @@ func create_gauge_cluster(hud_layer: CanvasLayer) -> void:
 	gauge_cluster.anchor_top = 1.0
 	gauge_cluster.anchor_bottom = 1.0
 	gauge_cluster.offset_left = 0.0
-	gauge_cluster.offset_right = gauge_cluster.offset_left + GAUGE_CLUSTER_DESIGN_SIZE.x
-	gauge_cluster.offset_top = -GAUGE_CLUSTER_SIZE.y
-	gauge_cluster.offset_bottom = gauge_cluster.offset_top + GAUGE_CLUSTER_DESIGN_SIZE.y
-	gauge_cluster.size = GAUGE_CLUSTER_DESIGN_SIZE
-	gauge_cluster.custom_minimum_size = GAUGE_CLUSTER_DESIGN_SIZE
-	gauge_cluster.scale = GAUGE_CLUSTER_SCALE
+	gauge_cluster.offset_right = gauge_cluster.offset_left + LEGACY_GAUGE_CLUSTER_DESIGN_SIZE.x
+	gauge_cluster.offset_top = -LEGACY_GAUGE_CLUSTER_SIZE.y
+	gauge_cluster.offset_bottom = gauge_cluster.offset_top + LEGACY_GAUGE_CLUSTER_DESIGN_SIZE.y
+	gauge_cluster.size = LEGACY_GAUGE_CLUSTER_DESIGN_SIZE
+	gauge_cluster.custom_minimum_size = LEGACY_GAUGE_CLUSTER_DESIGN_SIZE
+	gauge_cluster.scale = LEGACY_GAUGE_CLUSTER_SCALE
 	gauge_cluster.clip_contents = true
 	gauge_cluster.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud_layer.add_child(gauge_cluster)
 	
 	var gauge_background := TextureRect.new()
 	gauge_background.name = "GaugeClusterBackground"
-	gauge_background.texture = GaugeClusterTexture
+	gauge_background.texture = LegacyGaugeClusterTexture
 	gauge_background.anchor_right = 1.0
 	gauge_background.anchor_bottom = 1.0
 	gauge_background.offset_left = 0.0
@@ -2895,7 +3614,7 @@ func create_gauge_cluster(hud_layer: CanvasLayer) -> void:
 	gauge_background.stretch_mode = TextureRect.STRETCH_SCALE
 	gauge_background.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	gauge_cluster.add_child(gauge_background)
-	gauge_background.size = GAUGE_CLUSTER_DESIGN_SIZE
+	gauge_background.size = LEGACY_GAUGE_CLUSTER_DESIGN_SIZE
 	
 	gauge_fuel_needle = create_gauge_needle(Color(0.0, 0.9, 1.0, 0.92), Vector2(96.0, 166.0))
 	gauge_cluster.add_child(gauge_fuel_needle)
@@ -2928,6 +3647,9 @@ func create_gauge_needle(color: Color, gauge_center: Vector2) -> ColorRect:
 
 
 func rebuild_fuel_bar_segments() -> void:
+	if modular_mining_hud != null:
+		modular_mining_hud.set_fuel(fuel_seconds, max_fuel_seconds, fuel_warning_ratio)
+		return
 	for segment in fuel_bar_segments:
 		if segment != null:
 			segment.queue_free()
@@ -2949,6 +3671,13 @@ func rebuild_fuel_bar_segments() -> void:
 
 
 func update_fuel_bar(delta: float = 0.0) -> void:
+	if modular_mining_hud != null:
+		if fuel_seconds / maxf(max_fuel_seconds, 0.01) <= fuel_warning_ratio:
+			fuel_warning_blink_time += delta
+		else:
+			fuel_warning_blink_time = 0.0
+		modular_mining_hud.set_fuel(fuel_seconds, max_fuel_seconds, fuel_warning_ratio)
+		return
 	if fuel_bar == null or fuel_bar_fill == null:
 		return
 	
@@ -2983,8 +3712,10 @@ func update_hud() -> void:
 		return
 	
 	update_fuel_bar()
+	update_hull_health_bar()
 	update_hud_cargo_icons()
 	update_gauge_cluster()
+	update_ability_buttons()
 	
 	hud_label.text = "Credits: %d\nCargo: %d / %d\nDeveloper Setup: Ctrl+T" % [
 		credits,
@@ -3005,19 +3736,25 @@ func update_hud_cargo_icons() -> void:
 			continue
 		
 		var item := HBoxContainer.new()
-		item.add_theme_constant_override("separation", 4)
+		item.add_theme_constant_override("separation", 2)
 		hud_cargo_icons.add_child(item)
 		
-		item.add_child(create_resource_icon(resource_name, Vector2(30.0, 30.0)))
+		item.add_child(create_resource_icon(resource_name, Vector2(15.0, 15.0)))
 		
 		var count_label := Label.new()
 		count_label.text = "x%d" % count
 		count_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		count_label.add_theme_font_size_override("font_size", 16)
+		count_label.add_theme_font_size_override("font_size", 11)
 		item.add_child(count_label)
 
 
 func update_gauge_cluster() -> void:
+	if modular_mining_hud != null:
+		modular_mining_hud.set_fuel(fuel_seconds, max_fuel_seconds, fuel_warning_ratio)
+		modular_mining_hud.set_heat(heat_ratio)
+		modular_mining_hud.set_hull(hull_health, max_hull_health)
+		modular_mining_hud.set_depth_meters(get_current_depth_meters())
+		return
 	if gauge_cluster == null:
 		return
 	
@@ -3056,6 +3793,17 @@ func _unhandled_input(event: InputEvent) -> void:
 			developer_test_panel.toggle()
 			get_viewport().set_input_as_handled()
 			return
+
+		if key_event.pressed and not key_event.echo and not key_event.ctrl_pressed and not key_event.alt_pressed:
+			var pressed_key := key_event.keycode if key_event.keycode != 0 else key_event.physical_keycode
+			if pressed_key == KEY_Q:
+				try_activate_radial_blast()
+				get_viewport().set_input_as_handled()
+				return
+			if pressed_key == KEY_E:
+				try_activate_directional_blast()
+				get_viewport().set_input_as_handled()
+				return
 	
 	if event.is_action_pressed("ui_cancel"):
 		if developer_test_panel != null and developer_test_panel.is_open():
@@ -3063,6 +3811,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 		if is_shop_open:
 			close_shop()
+			return
+		if is_paused and pause_menu.handle_back_request():
 			return
 		
 		toggle_pause_menu()
@@ -3075,11 +3825,13 @@ func toggle_pause_menu() -> void:
 		pause_menu.show_menu()
 	else:
 		pause_menu.hide_menu()
+	update_ability_buttons()
 
 
 func _on_resume_pressed() -> void:
 	is_paused = false
 	pause_menu.hide_menu()
+	update_ability_buttons()
 
 
 func _on_quit_pressed() -> void:

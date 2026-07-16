@@ -106,7 +106,79 @@ func _ready() -> void:
 	create_engine_flame()
 	create_ui()
 	update_ship_visual(Vector2.RIGHT)
+	var pending_save := SaveManager.consume_pending_scene_state(scene_file_path)
+	if not pending_save.is_empty():
+		apply_save_data(pending_save)
 	queue_redraw()
+
+
+func create_save_data() -> Dictionary:
+	var planet_angles: Array = []
+	for planet in planets:
+		planet_angles.append(float(planet.get("angle", 0.0)))
+	var enemy_states: Array = []
+	for enemy in enemies:
+		var enemy_combatant: Dictionary = enemy.get("combatant", {})
+		enemy_states.append({
+			"angle": float(enemy.get("angle", 0.0)),
+			"defeated": bool(enemy.get("defeated", false)),
+			"combatant": enemy_combatant.duplicate(true),
+		})
+	return {
+		"state_version": 1,
+		"player_ship_position": vector_to_save(player_ship.global_position),
+		"player_orbit_radius": player_orbit_radius,
+		"player_orbit_angle": player_orbit_angle,
+		"player_combatant": player_combatant.duplicate(true),
+		"planet_angles": planet_angles,
+		"enemy_states": enemy_states,
+		"asteroid_belt_angle": asteroid_belt_angle,
+		"has_surprise_encounter_triggered": has_surprise_encounter_triggered,
+		"map_camera_position": vector_to_save(map_camera.position),
+		"map_camera_zoom": vector_to_save(map_camera.zoom),
+	}
+
+
+func apply_save_data(data: Dictionary) -> void:
+	if data.is_empty():
+		return
+	player_orbit_radius = float(data.get("player_orbit_radius", player_orbit_radius))
+	player_orbit_angle = float(data.get("player_orbit_angle", player_orbit_angle))
+	player_combatant = data.get("player_combatant", player_combatant).duplicate(true)
+	var planet_angles: Array = data.get("planet_angles", [])
+	for index in mini(planet_angles.size(), planets.size()):
+		planets[index]["angle"] = float(planet_angles[index])
+	update_planets(0.0)
+	var enemy_states: Array = data.get("enemy_states", [])
+	for index in mini(enemy_states.size(), enemies.size()):
+		var enemy_state: Dictionary = enemy_states[index]
+		enemies[index]["angle"] = float(enemy_state.get("angle", enemies[index].get("angle", 0.0)))
+		enemies[index]["defeated"] = bool(enemy_state.get("defeated", false))
+		if not enemy_state.get("combatant", {}).is_empty():
+			enemies[index]["combatant"] = enemy_state["combatant"].duplicate(true)
+	update_enemies(0.0)
+	asteroid_belt_angle = float(data.get("asteroid_belt_angle", asteroid_belt_angle))
+	has_surprise_encounter_triggered = bool(data.get("has_surprise_encounter_triggered", false))
+	player_ship.global_position = vector_from_save(data.get("player_ship_position", []), player_ship.global_position)
+	map_camera.position = vector_from_save(data.get("map_camera_position", []), map_camera.position)
+	map_camera.zoom = vector_from_save(data.get("map_camera_zoom", []), map_camera.zoom)
+	is_paused = false
+	is_traveling = false
+	is_combat_open = false
+	orbits_paused = false
+	combat_panel.visible = false
+	update_ship_visual(get_orbit_tangent(player_orbit_angle))
+	queue_redraw()
+
+
+func vector_to_save(value: Vector2) -> Array:
+	return [value.x, value.y]
+
+
+func vector_from_save(value: Variant, fallback: Vector2) -> Vector2:
+	if value is Array and value.size() >= 2:
+		return Vector2(float(value[0]), float(value[1]))
+	return fallback
 
 
 func _process(delta: float) -> void:
@@ -951,6 +1023,8 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("ui_cancel"):
 		if is_combat_open and is_combat_finished():
 			close_combat_panel()
+			return
+		if is_paused and pause_menu.handle_back_request():
 			return
 		
 		toggle_pause_menu()
