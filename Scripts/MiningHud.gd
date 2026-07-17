@@ -23,6 +23,7 @@ var q_cooldown_meter: HudSegmentedMeter
 var e_cooldown_meter: HudSegmentedMeter
 var depth_display: SevenSegmentDisplay
 var fuel_needle: ColorRect
+var heat_needle: ColorRect
 var fuel_value_label: Label
 var heat_value_label: Label
 var hull_value_label: Label
@@ -72,10 +73,10 @@ func build_hud() -> void:
 	design_root.add_child(housing)
 	housing.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
-	add_window_label("FUEL", Rect2(70.0, 130.0, 70.0, 22.0), Color(0.36, 0.93, 1.0, 1.0), 15)
-	fuel_value_label = add_window_label("0 / 0 KG", Rect2(139.0, 129.0, 165.0, 23.0), Color(0.82, 0.97, 1.0, 1.0), 14)
-	add_window_label("HEAT", Rect2(142.0, 225.0, 47.0, 26.0), Color(1.0, 0.48, 0.12, 1.0), 11)
-	heat_value_label = add_window_label("0%", Rect2(190.0, 225.0, 58.0, 26.0), Color(1.0, 0.68, 0.25, 1.0), 11)
+	add_window_label("CAPACITOR", Rect2(70.0, 130.0, 92.0, 22.0), Color(0.36, 0.93, 1.0, 1.0), 13)
+	fuel_value_label = add_window_label("0 / 20 E", Rect2(165.0, 129.0, 139.0, 23.0), Color(0.82, 0.97, 1.0, 1.0), 14)
+	add_window_label("SHIELD", Rect2(142.0, 225.0, 52.0, 26.0), Color(0.44, 0.82, 1.0, 1.0), 10)
+	heat_value_label = add_window_label("0/100", Rect2(194.0, 225.0, 56.0, 26.0), Color(0.62, 0.92, 1.0, 1.0), 10)
 	add_window_label("HULL", Rect2(563.0, 197.0, 55.0, 22.0), Color(0.66, 1.0, 0.72, 1.0), 13)
 	hull_value_label = add_window_label("0 / 0", Rect2(616.0, 197.0, 88.0, 22.0), Color(0.84, 1.0, 0.86, 1.0), 12)
 
@@ -88,6 +89,14 @@ func build_hud() -> void:
 	fuel_needle.pivot_offset = Vector2(8.0, 2.5)
 	fuel_needle.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	design_root.add_child(fuel_needle)
+	heat_needle = ColorRect.new()
+	heat_needle.name = "HeatNeedle"
+	heat_needle.color = Color(1.0, 0.26, 0.04, 0.98)
+	heat_needle.position = GAUGE_CENTER - Vector2(8.0, 2.5)
+	heat_needle.size = Vector2(83.0, 5.0)
+	heat_needle.pivot_offset = Vector2(8.0, 2.5)
+	heat_needle.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	design_root.add_child(heat_needle)
 
 	var fuel_pivot := ColorRect.new()
 	fuel_pivot.position = GAUGE_CENTER - Vector2(7.0, 7.0)
@@ -143,13 +152,32 @@ func add_window_label(text_value: String, rect: Rect2, color: Color, font_size: 
 
 
 func add_analog_gauge_marks() -> void:
-	var title := add_window_label("MINER FUEL", Rect2(366.0, 176.0, 105.0, 22.0), Color(0.43, 0.94, 1.0, 1.0), 13)
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	for index in 11:
-		var ratio := float(index) / 10.0
-		var angle := lerpf(deg_to_rad(-210.0), deg_to_rad(30.0), ratio)
+	var fuel_title := add_window_label("FUEL", Rect2(342.0, 181.0, 69.0, 22.0), Color(0.43, 0.94, 1.0, 1.0), 12)
+	fuel_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	var heat_title := add_window_label("HEAT", Rect2(425.0, 181.0, 69.0, 22.0), Color(1.0, 0.45, 0.14, 1.0), 12)
+	heat_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	var divider := ColorRect.new()
+	divider.position = GAUGE_CENTER + Vector2(-1.0, -91.0)
+	divider.size = Vector2(2.0, 75.0)
+	divider.color = Color(0.72, 0.76, 0.72, 0.62)
+	divider.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	design_root.add_child(divider)
+	for index in 7:
+		var ratio := float(index) / 6.0
+		var angle := lerpf(deg_to_rad(-180.0), deg_to_rad(-90.0), ratio)
 		var mark := ColorRect.new()
 		mark.color = Color(0.45, 0.8, 0.82, 0.82)
+		mark.position = GAUGE_CENTER + Vector2.from_angle(angle) * 82.0 - Vector2(1.5, 5.0)
+		mark.size = Vector2(3.0, 10.0)
+		mark.pivot_offset = Vector2(1.5, 5.0)
+		mark.rotation = angle + PI * 0.5
+		mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		design_root.add_child(mark)
+	for index in 7:
+		var ratio := float(index) / 6.0
+		var angle := lerpf(deg_to_rad(-90.0), deg_to_rad(0.0), ratio)
+		var mark := ColorRect.new()
+		mark.color = Color(0.94, 0.38, 0.12, 0.82)
 		mark.position = GAUGE_CENTER + Vector2.from_angle(angle) * 82.0 - Vector2(1.5, 5.0)
 		mark.size = Vector2(3.0, 10.0)
 		mark.pivot_offset = Vector2(1.5, 5.0)
@@ -192,23 +220,29 @@ func create_cooldown_label(rect: Rect2) -> Label:
 	return label
 
 
-func set_fuel(current_fuel: float, maximum_fuel: float, warning_ratio: float) -> void:
+func set_capacitor(current_energy: float, maximum_energy: float) -> void:
 	if fuel_meter == null:
 		return
-	fuel_meter.set_values(current_fuel, maximum_fuel)
-	var ratio := clampf(current_fuel / maxf(maximum_fuel, 0.001), 0.0, 1.0)
-	fuel_meter.fill_color = Color(1.0, 0.08, 0.035, 0.98) if ratio <= warning_ratio else Color(0.0, 0.78, 0.88, 0.98)
-	fuel_value_label.text = "%d / %d KG" % [roundi(current_fuel), ceili(maximum_fuel)]
-	fuel_needle.rotation = lerpf(deg_to_rad(-210.0), deg_to_rad(30.0), ratio)
+	fuel_meter.set_values(current_energy, maximum_energy)
+	var ratio := clampf(current_energy / maxf(maximum_energy, 0.001), 0.0, 1.0)
+	fuel_meter.fill_color = Color(1.0, 0.2, 0.05, 0.98) if ratio <= 0.2 else Color(0.0, 0.78, 0.88, 0.98)
+	fuel_value_label.text = "%d / %d kJ" % [roundi(current_energy), ceili(maximum_energy)]
 
 
-func set_heat(new_heat_ratio: float) -> void:
+func set_shield(current_shield: float, maximum_shield: float, powered: bool) -> void:
 	if heat_meter == null:
 		return
-	var clamped_ratio := clampf(new_heat_ratio, 0.0, 1.0)
-	heat_meter.set_values(clamped_ratio * 100.0, 100.0)
-	heat_meter.modulate = Color(0.34, 0.34, 0.34, 0.8) if clamped_ratio <= 0.0 else Color.WHITE
-	heat_value_label.text = "%d%%" % roundi(clamped_ratio * 100.0)
+	var clamped_shield := clampf(current_shield, 0.0, maximum_shield)
+	heat_meter.fill_color = Color(0.2, 0.7, 1.0, 0.96)
+	heat_meter.set_values(clamped_shield, maximum_shield)
+	heat_meter.modulate = Color.WHITE if powered else Color(0.4, 0.4, 0.4, 0.78)
+	heat_value_label.text = "%d/%d" % [roundi(clamped_shield), ceili(maximum_shield)]
+
+
+func set_engine_levels(current_fuel: float, maximum_fuel: float, new_heat_ratio: float) -> void:
+	var fuel_ratio := clampf(current_fuel / maxf(maximum_fuel, 0.001), 0.0, 1.0)
+	fuel_needle.rotation = lerpf(deg_to_rad(-180.0), deg_to_rad(-90.0), fuel_ratio)
+	heat_needle.rotation = lerpf(deg_to_rad(-90.0), deg_to_rad(0.0), clampf(new_heat_ratio, 0.0, 1.0))
 
 
 func set_hull(current_hull: float, maximum_hull: float) -> void:
@@ -231,15 +265,17 @@ func set_ability_states(
 	e_remaining: float,
 	e_total: float,
 	globally_disabled: bool,
-	mouse_directed_e: bool
+	mouse_directed_e: bool,
+	loaded_explosive_charges: int
 ) -> void:
-	set_one_ability_state(radial_button, q_button_overlay, q_cooldown_meter, radial_cooldown_label, q_remaining, q_total, globally_disabled)
-	set_one_ability_state(directional_button, e_button_overlay, e_cooldown_meter, directional_cooldown_label, e_remaining, e_total, globally_disabled)
+	set_one_ability_state(radial_button, q_button_overlay, q_cooldown_meter, radial_cooldown_label, q_remaining, q_total, globally_disabled, loaded_explosive_charges)
+	set_one_ability_state(directional_button, e_button_overlay, e_cooldown_meter, directional_cooldown_label, e_remaining, e_total, globally_disabled, loaded_explosive_charges)
 	directional_button.tooltip_text = (
-		"E: mouse-directed three-block blast."
+		"E: mouse-directed three-block blast. Consumes 1 explosive charge."
 		if mouse_directed_e
-		else "E: drill-facing three-block blast."
+		else "E: drill-facing three-block blast. Consumes 1 explosive charge."
 	)
+	radial_button.tooltip_text = "Q: radial blast. Consumes 1 explosive charge."
 
 
 func set_one_ability_state(
@@ -249,14 +285,16 @@ func set_one_ability_state(
 	label: Label,
 	remaining: float,
 	total: float,
-	globally_disabled: bool
+	globally_disabled: bool,
+	loaded_explosive_charges: int
 ) -> void:
 	var on_cooldown := remaining > 0.0
-	button.disabled = globally_disabled or on_cooldown
+	var has_ammo := loaded_explosive_charges > 0
+	button.disabled = globally_disabled or on_cooldown or not has_ammo
 	overlay.color = Color(0.0, 0.0, 0.0, 0.64) if button.disabled else Color(1.0, 0.82, 0.38, 0.18)
 	var progress := 1.0 - clampf(remaining / maxf(total, 0.001), 0.0, 1.0)
 	meter.set_values(progress, 1.0)
-	label.text = format_cooldown(remaining)
+	label.text = "NO CHARGE" if not has_ammo else "%s | %d" % [format_cooldown(remaining), loaded_explosive_charges]
 	label.modulate = Color(0.64, 0.66, 0.66, 1.0) if globally_disabled else Color.WHITE
 
 

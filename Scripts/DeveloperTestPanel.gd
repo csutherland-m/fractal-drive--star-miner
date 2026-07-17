@@ -9,6 +9,7 @@ var active_fuel_input: SpinBox
 var resource_inputs: Dictionary = {}
 var upgrade_inputs: Dictionary = {}
 var status_label: Label
+var cave_arrow_toggle: CheckButton
 var was_paused: bool = false
 
 
@@ -109,6 +110,20 @@ func build_panel() -> void:
 			upgrade_grid.add_child(level_input)
 			upgrade_inputs[definition["id"]] = level_input
 
+	var cave_tools_row := HBoxContainer.new()
+	cave_tools_row.add_theme_constant_override("separation", 12)
+	root_box.add_child(cave_tools_row)
+	add_button(
+		cave_tools_row,
+		"Teleport 6 Blocks from Nearest Cave",
+		Callable(self, "teleport_near_nearest_cave")
+	)
+	cave_arrow_toggle = CheckButton.new()
+	cave_arrow_toggle.text = "Show Nearest Cave Arrow"
+	cave_arrow_toggle.custom_minimum_size = Vector2(240.0, 42.0)
+	cave_arrow_toggle.toggled.connect(Callable(self, "set_cave_arrow_enabled"))
+	cave_tools_row.add_child(cave_arrow_toggle)
+
 	status_label = Label.new()
 	status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	status_label.text = "Changes apply to the current test run only."
@@ -178,6 +193,8 @@ func refresh_from_scene() -> void:
 		resource_inputs[resource_name].value = mining_scene.get_total_resource_count(resource_name)
 	for upgrade_id in upgrade_inputs:
 		upgrade_inputs[upgrade_id].value = mining_scene.upgrade_levels.get(upgrade_id, 0)
+	if cave_arrow_toggle != null:
+		cave_arrow_toggle.set_pressed_no_signal(mining_scene.is_developer_cave_arrow_enabled())
 
 
 func load_preset(preset: Dictionary) -> void:
@@ -210,3 +227,18 @@ func apply_current_setup() -> void:
 		"upgrade_levels": requested_levels,
 	})
 	status_label.text = "Applied test setup at %dm. Close with Ctrl+T when ready." % int(depth_input.value)
+
+
+func teleport_near_nearest_cave() -> void:
+	var result: Dictionary = mining_scene.teleport_player_near_nearest_cave()
+	if result.is_empty():
+		status_label.text = "No cave could be generated for the current test world."
+		return
+	cave_arrow_toggle.set_pressed_no_signal(true)
+	depth_input.value = mining_scene.get_current_depth_meters()
+	status_label.text = "Teleported 6 blocks from %s. Cave arrow enabled." % result["encounter_id"]
+
+
+func set_cave_arrow_enabled(enabled: bool) -> void:
+	mining_scene.set_developer_cave_arrow_enabled(enabled)
+	status_label.text = "Nearest cave arrow %s." % ("enabled" if enabled else "disabled")

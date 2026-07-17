@@ -113,10 +113,10 @@ The regression starts two new games, generates both galaxies, both seeded local-
 - `A/D` or arrow keys: move.
 - `W`, `Space`, or up arrow: thrust upward like a small rocket.
 - Hold left, right, or down toward a block to mine it. Blocks have hardness/HP, and the drill deals damage over time.
-- `Q` or the HUD button activates Radial Blast, mining all mineable blocks in the 3x3 area centered on the miner. Its cooldown is 60 seconds.
-- `E` or the HUD button activates Directional Blast, mining the next three mineable blocks in one cardinal direction. It has no fuel cost and has a 60-second cooldown.
+- `Q` or the HUD button activates Radial Blast, mining all mineable blocks in the 3x3 area centered on the miner. It consumes one loaded explosive charge and has a 5-second cooldown.
+- `E` or the HUD button activates Directional Blast, mining the next three mineable blocks in one cardinal direction. It consumes one loaded explosive charge, has no direct miner-fuel cost, and has a 5-second cooldown.
 - Pause and choose `Settings` to toggle `Mouse-directed E ability`, the first gameplay setting. When enabled, E selects whichever 90-degree direction from the miner is closest to the cursor. When disabled, hold `W/up`, `S/down`, `A/left`, or `D/right` while activating to aim explicitly; otherwise E uses the drill's current facing.
-- Both abilities use a two-second code-generated explosion-to-dust sequence. Blast blocks are now removed after about 0.73 seconds instead of 1.1 seconds—a 50% increase in removal speed—while the complete visual sequence still lasts two seconds. Lode Stone remains unmineable, and an ability does not start its cooldown or spend fuel when it has no valid target.
+- Both abilities use a two-second code-generated explosion-to-dust sequence. Blast blocks are now removed after about 0.73 seconds instead of 1.1 seconds—a 50% increase in removal speed—while the complete visual sequence still lasts two seconds. Lode Stone remains unmineable, and an ability does not consume a charge or start its cooldown when it has no valid target.
 - Ore caught by a blast is rolled and deposited directly into miner cargo using normal inventory-capacity rules. Ability pickup lines appear in a small list about 200 px above screen center, using the same amount/resource animation as ordinary mining. No ability name, `BLAST RECOVERY` heading, dirt, or rock text is displayed.
 - Mining emits placeholder dust/sparks and floating pickup text. These are code-driven now; replacement particle textures can be assigned on `MiningEffects.gd` later without changing mining logic.
 - The base miner moves 30 percent faster and mines 50 percent faster than the first prototype tuning.
@@ -124,26 +124,28 @@ The regression starts two new games, generates both galaxies, both seeded local-
 - Dirt and rock do not take cargo space.
 - Starting two rows below the surface, dirt has a 2 percent chance to seed a small void pocket. Each pocket rolls 1-4 connected blocks, randomizes its shape from the starting dirt block, and remains hidden by fog of war until revealed.
 - Lode Stone starts appearing at 500m by replacing some normal rock blocks. It starts at a 1 percent conversion chance, scales upward with depth, cannot be mined yet, and is affected by gravity when unsupported. Landing impacts trigger a dust burst and short camera shake.
-- Normal ore blocks roll their yield when mined, giving 2-10 units of that resource. Raw fuel blocks still yield one raw fuel item for processing.
+- Normal ore blocks roll their own base yield range: Copper 2-9, Iron 2-8, Gold 1-6, Diamond 1-4, Warp Gems 1-3, and Black Hole Crystals 1-2. Drill Yield upgrades expand those ranges; Raw Fuel blocks still yield one item for processing.
 - Every ordinarily mined ore displays its pickup number at the mined block. Q/E blast pickups instead appear about 200 px above screen center so a multi-block ability does not obscure the miner. Both use the same rise, slight fall, and fade animation and scale from an 18-point minimum-roll size to a 38-point maximum-roll size. A maximum roll turns gold and flashes twice.
 - Copper generation is 50% more frequent in every depth band. Its surface/middle/deep probabilities increase from 1.43%/4.55%/5.2% to 2.145%/6.825%/7.8%; the added probability is taken from dirt so rock and all other resource frequencies remain unchanged.
 - Treasure blocks yield exactly one Treasure. At the lander, each Treasure can improve a random non-maxed upgrade across any category, with an 80% chance of +1 level, 15% of +2, and 5% of +3, capped at its normal maximum.
 - The miner's ground and airborne horizontal deceleration are 50% stronger, producing a quicker stop when directional input is released.
-- Planet Core is a unique once-per-planet material. For current testing it appears once somewhere on the 1000m row; later this should be moved to the intended 5000m row.
+- Planet Core is a unique once-per-planet material located on the altar in the deterministic cavern below the 7,500m barrier.
 - Ore and raw fuel fill cargo. Starting miner cargo capacity is 100 units.
 - The miner cargo list is vertically centered along the left edge. As resource types are added it expands equally upward and downward around the center. Icons remain at their reduced 15 px size, while the count font is now 11 px—about 40% larger than its previous 8 px size.
 - The miner starts with 100 hull HP, displayed in a HUD health bar. The first damaging speed is calculated from a three-block free fall with `sqrt(2 * gravity * (3 * 64px))`, currently about 588 px/s. Damage begins at 10 HP at that speed and scales linearly to 99 HP at the miner's updated 900 px/s terminal velocity.
-- Q and E use 64x64 icon-only buttons matching the native ore-tile icon size, with separate `Q`/`E` labels above and cooldown text below. Q's placeholder pictograph shows a miner with a radial explosion behind it; E's shows a forward cone explosion.
+- Q and E use Apollo-era illuminated pushbuttons in the modular mining HUD. They darken and report `NO CHARGE` when the miner has no explosive ammunition; otherwise the cooldown recess shows readiness and the shared loaded-charge count.
 - Fuel depletion and zero hull HP now route through one standard death sequence. Both display `You lose! You're a fuckin Looser, Bruhhhh`, play the same animated death treatment, start a fresh seeded run, and reload the starting mining planet.
 - The lander Cargo Hold starts at 5,000 units, 50x the base miner capacity, and deposits stop when it is full.
 - Raw fuel is a coal-tinted dirt-style block that appears more often than iron but less often than copper.
 - Miner fuel is measured in kg, with 1 kg providing 1 second of drive time.
-- Driving now consumes 70% of the base active fuel rate, while actively drilling a mineable block consumes 110% of the base rate. Engine Efficiency continues to modify both rates.
-- Idling consumes fuel slowly, using 1 kg every 10 seconds.
+- Driving consumes 70% of the base active fuel rate, while actively drilling a mineable block consumes 110% of the base rate. Power Unit Efficiency modifies both rates.
+- Idling consumes fuel slowly, using 1 kg every 10 seconds at level 0; Power Unit Efficiency now modifies this power-production fuel use too.
 - A segmented teal fuel bar across the top of the screen shows remaining fuel in 10-second chunks and blinks red below 30 percent.
 - The player starts with 100 Credits.
 - Raw fuel can be processed in the lander into 200 kg of mining fuel and 1 ton of rocket fuel per block.
 - Fuel processing takes 30 seconds per 1 ton of rocket fuel. The Lander screen shows the remaining processing time.
+- The Lander screen also opens an instant Ammo Fabricator. One Raw Fuel block becomes 10 explosive powder, up to 100 stored powder. One Copper becomes one casing, with lander cargo consumed before miner cargo for both inputs.
+- One powder plus one casing assembles one explosive charge. The fabricator stores up to 20 finished charges, while the miner initially carries up to 10 for shared use by Q and E. Loaded explosives use the separate ammo store and never consume ore-cargo capacity. Each charge is equivalent to one Copper plus one tenth of a Raw Fuel block.
 - Raw fuel that does not fit in the lander fuel tanks remains in the cargo hold.
 - The starship can store 7000 kg of mining fuel and currently starts with 1000 kg for playtesting.
 - On landing, the starship transfers enough mining fuel to fill the lander tank when available.
@@ -157,17 +159,79 @@ The regression starts two new games, generates both galaxies, both seeded local-
 - Press `Ctrl+T` in the mining scene to open the Developer Test Setup panel. It can teleport to an exact depth, assign exact upgrade levels, and set test credits, Raw Fuel, lander rocket fuel, and active miner fuel without playing through progression first.
 - The Lander screen shows Cargo Hold contents in a left-side icon list.
 - Each lander-market resource has compact `Sell`, `10`, and `All` buttons that sell one unit, up to ten units, or that resource's complete lander-held stack. The global `Sell All` button sells every resource in the lander. None of these actions sell resources still carried by the miner. Processing and upgrades can continue consuming resources from both miner cargo and the lander hold.
-- Existing non-credit upgrade resource costs are scaled by 10 for the new 2-10 ore yield economy. Credit costs are unchanged.
+- Existing non-credit upgrade resource costs retain the prior 10x economy scale. Credit costs are unchanged; Mk 1 additions use first-pass costs pending economy balancing against the new per-ore yield ranges.
 - Planetary Upgrades currently contains Fuel Depot, a one-time build costing scaled ore/resources and Credits.
 - Infrastructure sprites render as `Sprite2D` children of `MineTiles` with z-index 8, above terrain and below the miner at z-index 10.
 - `Esc`: pause.
 - `Ctrl+T`: open or close the Developer Test Setup panel.
+
+## Ground Enemy Foundation
+
+- The deterministic starting planet now plans an irregular cave around every 1,000-meter depth milestone. Each cave center is seeded within 100 meters above or below its milestone and carves roughly a varied 7x7 foreground void through either dirt or rock.
+- Every cave is enclosed by a complete deterministic shell of ordinary Rock between 2 and 5 blocks thick. Cave-wall cells cannot become Lode Stone, ore, or random dirt voids; existing saves receive the same seeded rock-shell retrofit without replacing wall blocks the player mines afterward.
+- Every planned cave contains a tribal-demon altar and portal. The first-pass altar is code-drawn stone with a glowing artifact; the portal is a pulsing purple-and-green oval. These are isolated placeholder visuals that can be replaced without changing encounter logic.
+- Approach an unopened altar and press `F` when the interaction prompt appears. Looting currently awards one Treasure, marks the altar opened, activates its portal, and schedules three tribal demons. A full miner cargo prevents looting until room is available.
+- Tribal demons currently use a code-drawn blue Godot-style placeholder face with horns and tribal paint. They pursue the miner inside open terrain and fire poison-green blow darts when they have clear line of sight.
+- Blow darts deal 5 hull damage and use the standard zero-hull death flow. Q/E blast cells deal 3 damage to demons, enough to defeat the current 3 HP placeholder enemy.
+- Cave definitions, altar/portal state, pending portal spawns, defeated counts, and active demon positions/health are included in mining saves. Active darts are intentionally transient and are not restored.
+- Existing mining saves are supported: deterministic milestone caves are planned and carved into already-generated terrain when the save loads, while preserving the Planet Core if a planned cave would overlap it.
+- Current limitation: this is the combat foundation, not final enemy AI. Demons use simple direct movement and line-of-sight attacks rather than navigation meshes, advanced ground traversal, animation, or final loot tables.
+
+## Planet Core Barrier and Vault Encounter
+
+- The Planet Core has moved from its former shallow test placement to a deterministic grand altar around 7,650 meters, inside a 42x18-block cavern that begins at 7,500 meters.
+- From 7,000 through 7,490 meters, every foreground block is ordinary Rock or a rare high-value block. The barrier contains no Dirt, Raw Fuel, Copper, Iron, or Lode Stone. Its seeded first-pass distribution is 97.55% Rock, 1.5% Treasure, 0.6% Diamond, 0.25% Warp Gems, and 0.1% Black Hole Crystals.
+- Normal milestone caves stop before the 7,000-meter barrier. Breaking through the final barrier row opens directly into the massive core cavern.
+- The core rests on an oversized code-drawn basalt altar surrounded by green and purple demon-tech conduits. Four dormant portal positions surround the chamber.
+- Mining the Planet Core adds it to the miner inventory, closes a visible demon-tech ceiling seal, locks the cavern perimeter against drilling/blast escape, and starts a five-wave lockdown encounter.
+- Wave counts are 3, 5, 7, 9, and 12 demons. Later waves gain health, movement speed, attack frequency, and blow-dart damage. A boss HUD reports the current wave and remaining enemies.
+- After the fifth wave is defeated, all portals deactivate, the ceiling reopens, the perimeter becomes mineable again, and the secured Planet Core can be returned to the Starship through the existing flow.
+- Core-vault layout, encounter wave, pending spawns, active demons, lock state, and completion are included in mining saves. Existing saves move an unclaimed old core into the new deterministic vault and retrofit already-generated barrier/cavern terrain.
+- Current limitation: the altar, demon technology, seals, portals, and enemies use code-drawn placeholder art; the encounter currently uses increasingly strong tribal demons rather than a unique final boss model.
+
+## Miner Laser, Capacitor, and Shield
+
+- Hold the left mouse button to fire the miner's placeholder turret toward the cursor. The muzzle currently floats 42 pixels above the miner until final turret art is added.
+- The turret fires up to three cyan laser bolts per second. Bolts travel at 1,400 pixels per second and disappear when they hit a tribal demon, a foreground terrain block, or the generated mining-area boundary.
+- Electrical values use a 100x engineering scale so percentage upgrades can remain integer-friendly. The starting capacitor holds 2,000 kJ. The Power Unit generates 600 kW, Life Support consumes 50 kW, the shield consumes 200 kW, mobility draws a base 200 kW at full throttle, and each laser costs 200 kJ. Essential Life Support and shield maintenance are supplied first; mobility scales down rather than drawing beyond available generation, while the capacitor covers essential shortfalls and weapon shots.
+- The shield begins with 100 HP and absorbs ordinary enemy/projectile damage before the hull. Fall damage and falling Lode Stone impacts bypass it; falling Lode Stones currently deal 25 hull damage.
+- Each successful laser shot restarts a two-second shield-recharge delay. At full throttle, the base vehicle retains 150 kW after Life Support, shield upkeep, and mobility; while stationary, the surplus is 350 kW. After the delay, incoming surplus is diverted into damaged shields at 2 HP per 100 kJ, up to the base 6 HP-per-second recharge ceiling, with any remaining generation charging the capacitor.
+- The shield is invisible in this pass. Stored capacitor energy is preserved for firing rather than drained by shield repair; shield repair uses the incoming generation surplus after essential and active mobility loads.
+- The former upper-left fuel bar is now the capacitor indicator, and the former heat strip now displays shield HP. The center dial is divided vertically: its cyan left needle shows mining fuel and its orange right needle shows heat from laser firing. Heat currently cools passively and has no overheat penalty.
+- Capacitor energy, shield HP, laser cooldown, shield-recharge delay, and heat are included in mining saves. In-flight laser bolts are intentionally transient.
+- Electrical upgrade rates are rounded to the nearest whole kW/kJ after each compounded level. Mining saves now carry a power-scale version; older saves automatically multiply stored capacitor energy by 100 so their charge percentage is preserved.
+
+## Mk 1 Mining Vehicle Upgrades
+
+- The former flat Miner list is now an extensible set of component categories: Drill Assembly, Power Unit, Mobility System, Fuel Cell, Cargo Capacity, Thermal Management, Life Support, Shield Generator, Structural Frame, Capacitor Bank, and Weapon Systems. Each is data-driven and can accept future Mk 2-Mk 10 definitions without rebuilding the upgrade UI or developer panel.
+- Unless noted otherwise, a 10% improvement compounds each level: increases use `base * 1.1^level`, while consumption and delay reductions use `base * 0.9^level`.
+- Drill Yield uses per-ore starting ranges. Copper is 2-9, Iron 2-8, Gold 1-6, Diamond 1-4, Warp Gems 1-3, and Black Hole Crystals 1-2. Odd levels raise the minimum by one and even levels raise the maximum by one, relative to each ore's base.
+- Power Unit output controls electrical generation rather than vehicle speed. Its efficiency reduces all mining-fuel drain associated with keeping the Power Unit active, including idle, driving, and drilling drain. Mobility speed, acceleration/deceleration, and vertical climb are independently upgradeable; every level in any of those three performance lines compounds full-throttle mobility power draw by 6%. Kinetic Efficiency separately compounds that resulting draw downward by 10% per level. With all four Mobility lines at level 5, rounded full-throttle draw is 283 kW, 41.5% above the 200 kW base.
+- Mk 1 Power Output is intentionally capped at level 7: the rounded progression is 600, 660, 726, 799, 879, 967, 1,064, and 1,170 kW. With all other electrical upgrades at level 10 and continuous full-rate shields, movement, and weapons, this creates an approximately 125 kW (9.7%) deficit that the capacitor can cover for roughly 41 seconds.
+- Shield upgrades independently control HP, recharge delay, recharge-rate ceiling, and both maintenance/recharge efficiency. Structural Frame controls hull integrity and flat armor. Armor is calculated once per incoming hull hit after shield absorption, including shield-bypassing fall and boulder damage, and always allows at least 1 hull damage through.
+- Weapon upgrades affect the laser's final floating-point damage, energy cost, fire rate, and critical chance. Critical chance adds 2 percentage points per level; a critical applies 200% after the normal damage modifiers.
+- Life Support Tolerance is intentionally present as a non-functional placeholder for later environment mechanics. Sensor Strength was not in the Mk 1 specification, so it remains available under Retained Miner Upgrades for later review. All existing Lander, Planetary, Starship, and Global upgrades are also retained unchanged.
+
+### Upgrade Replacement Change Log
+
+- `Drill Efficiency`: retained at 10% compounded drill damage per level (description clarified from “faster”).
+- `Cargo Capacity`: retained at 10% compounded capacity per level.
+- `Fuel Tank` (`miner_fuel_tank`): renamed/migrated to Fuel Cell Capacity (`miner_fuel_cell_capacity`); its 10% capacity behavior is unchanged.
+- `Engine Power` (`miner_engine_power`): previously increased speed and acceleration 5% per level; renamed/migrated to Power Unit Output (`miner_power_unit_output`) and now increases electrical generation 10% per level. Mobility upgrades now own movement performance.
+- `Engine Efficiency` (`miner_engine_efficiency`): previously reduced movement/drilling fuel consumption 10% per level; renamed/migrated to Power Unit Efficiency (`miner_power_unit_efficiency`) and now also applies to idle power-production fuel use.
+- `Hull Strength` (`miner_hull_strength`): previously a non-functional placeholder; renamed/migrated to Structural Frame Maximum Integrity (`miner_structural_integrity`) and now increases maximum hull HP 10% per level.
+- Added functional Drill Yield, four Mobility, Thermal Management, Life Support Efficiency, four Shield Generator, Structural Armor, Capacitor Capacity, and four Weapon Systems upgrade lines.
+- Existing saves migrate renamed string IDs when mining state loads. If both an old and new ID are present, the higher level wins. Current hull, shield, capacitor, and fuel values remain valid and gain newly purchased capacity rather than being reset.
+
+Changed files for this upgrade pass are `Scripts/AsteroidMining.gd`, `Scripts/DamageRules.gd`, `Scripts/MinerLaserSystem.gd`, `Scripts/GroundEncounterSystem.gd`, `Tests/SeedFoundationTest.gd`, and `README.md`. Current limitations: costs are first-pass extensions of the existing economy; Power Unit fuel use remains represented by the mining scene's continuous fuel drain rather than a separate generator simulation; Life Support failure and Tolerance effects are not implemented; heat has no penalty; and the shop does not yet group upgrades by Mk tier.
 
 ## Developer Test Setup
 
 - God Mode has been removed. The replacement is a direct, reversible test-loadout panel in `Scripts/DeveloperTestPanel.gd`.
 - The panel pauses gameplay while open and provides exact controls for target depth, every upgrade level, Credits, Raw Fuel, lander rocket fuel, and active miner fuel.
 - Quick presets include surface/no upgrades and 3000m with Drill Efficiency levels 0, 1, 3, or 5. Presets populate the controls; `Apply Setup + Teleport` performs the change.
+- `Teleport 6 Blocks from Nearest Cave` generates the first cave when necessary, selects the cave nearest the miner, and carves a small arrival pocket exactly six cells beyond its outer rock wall. The approach favors the miner-facing side, so a surface test normally approaches from above.
+- `Show Nearest Cave Arrow` controls a developer-only orange/yellow arrow above the miner. The teleport action enables it automatically, and it continuously retargets the nearest planned cave as the miner moves.
 - A depth teleport generates the same deterministic planet rows that normal descent would generate, moves the miner to the requested depth, reveals a 13x13 inspection area, and carves only a 3x2 arrival pocket. Surrounding ore placement remains untouched for rarity and drill-feel testing.
 - Upgrade-derived stats are recalculated from captured base values and explicit `upgrade_levels`. Changing Drill Efficiency from level 5 back to level 1 therefore produces the real level-1 drill speed instead of attempting to reverse accumulated multipliers.
 - The panel builds upgrade controls directly from `upgrade_definitions`, including category and `max_level`. New categories and higher upgrade tiers appear automatically.
@@ -245,10 +309,10 @@ The regression starts two new games, generates both galaxies, both seeded local-
 - Run the project headless: `Godot_v4.6.3-stable_win64.exe --headless --path <project path> --quit`.
 - Run the star system scene headless: `Godot_v4.6.3-stable_win64.exe --headless --path <project path> res://Scenes/StarSystemView.tscn --quit`.
 - Run the mining scene headless: `Godot_v4.6.3-stable_win64.exe --headless --path <project path> res://Scenes/AsteroidMining.tscn --quit`.
-- The seed-foundation regression also checks Q's 3x3 targeting, E's four-direction three-cell targeting, cursor-to-cardinal direction selection, the Settings controls, both cooldown values, automatic blast-ore inventory capture, and the hull-impact damage thresholds.
+- The seed-foundation regression also checks Q's 3x3 targeting, E's four-direction three-cell targeting, cursor-to-cardinal direction selection, the Settings controls, five-second cooldowns, ammo fabrication and cargo-first input consumption, deterministic cave placement, altar/portal triggering, demon spawning, blow-dart hull damage, explosive save round-tripping, automatic blast-ore inventory capture, and the hull-impact damage thresholds.
 - Run the seeded foundation regression: `Godot_v4.6.3-stable_win64_console.exe --headless --path <project path> --script res://Tests/SeedFoundationTest.gd`.
 - In game, confirm the player starts beyond the asteroid belt, all orbiting bodies move slowly, raider markers look like hostile HUD reticles, raider clicks transfer the ship to enemy orbit before combat, and planet clicks intercept the future planet position before freezing and transitioning to mining.
-- In game, mine normal ore to confirm 2-10 unit rolls, deposit ore into the 5,000-unit Cargo Hold, process raw fuel, and build Planetary Upgrades -> Fuel Depot to confirm capacity increases to 40 tons.
+- In game, mine Copper to confirm its base 2-9 roll, compare other ores' individual ranges, then use the developer panel to verify Drill Yield alternates minimum/maximum growth. Deposit ore into the 5,000-unit Cargo Hold, process raw fuel, and build Planetary Upgrades -> Fuel Depot to confirm capacity increases to 40 tons.
 
 ## Recommended Next Step
 
