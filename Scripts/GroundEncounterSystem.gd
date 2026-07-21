@@ -95,6 +95,7 @@ class BlowDartPlaceholder extends Node2D:
 @export var demon_attack_cooldown: float = 2.2
 @export var blow_dart_speed: float = 340.0
 @export var blow_dart_damage: int = 5
+@export var first_cave_warning_distance_blocks: float = 7.0
 
 var mining_scene: Node
 var encounter_definitions: Array[Dictionary] = []
@@ -180,17 +181,42 @@ func update_encounter_visuals(encounter: Dictionary) -> void:
 		altar.visible = true
 		altar.queue_redraw()
 	if portal != null:
-		portal.active = bool(encounter.get("triggered", false))
+		portal.active = (
+			bool(encounter.get("triggered", false))
+			and not is_encounter_defeated(encounter)
+		)
 		portal.queue_redraw()
+
+
+func is_encounter_defeated(encounter: Dictionary) -> bool:
+	return (
+		bool(encounter.get("defeated", false))
+		or int(encounter.get("defeated_count", 0)) >= demon_count_per_altar
+	)
 
 
 func process_encounters(delta: float) -> void:
 	if mining_scene == null:
 		return
+	check_first_cave_proximity()
 	update_interaction_prompt()
 	update_spawning(delta)
 	update_demons(delta)
 	update_darts(delta)
+
+
+func check_first_cave_proximity() -> void:
+	if bool(mining_scene.first_enemy_cave_warning_shown):
+		return
+	for encounter in encounter_definitions:
+		if int(encounter.get("depth_level", 0)) != 1:
+			continue
+		var cave_cell := array_to_cell(encounter.get("cave_center_cell", [0, 0]))
+		var cave_position: Vector2 = mining_scene.mine_tiles.map_to_local(cave_cell)
+		var warning_distance := first_cave_warning_distance_blocks * 64.0
+		if cave_position.distance_to(mining_scene.player_marker.position) <= warning_distance:
+			mining_scene.show_first_enemy_cave_warning()
+		return
 
 
 func update_interaction_prompt() -> void:
@@ -299,6 +325,7 @@ func spawn_configured_demon(
 	demon.attack_remaining = 0.6 + float(demons.size()) * 0.2
 	add_child(demon)
 	demons.append(demon)
+	mining_scene.on_first_enemy_contact()
 
 
 func update_demons(delta: float) -> void:
@@ -403,6 +430,12 @@ func mark_demon_defeated(encounter_id: String) -> void:
 	for encounter in encounter_definitions:
 		if str(encounter.get("encounter_id", "")) == encounter_id:
 			encounter["defeated_count"] = int(encounter.get("defeated_count", 0)) + 1
+			if int(encounter["defeated_count"]) >= demon_count_per_altar:
+				encounter["defeated"] = true
+				var runtime: Dictionary = runtime_by_encounter.get(encounter_id, {})
+				runtime["pending_spawns"] = 0
+				runtime_by_encounter[encounter_id] = runtime
+				update_encounter_visuals(encounter)
 			return
 
 

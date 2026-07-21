@@ -76,6 +76,11 @@ func run_seed_foundation_tests() -> void:
 		"A different run seed did not change the galaxy.",
 		failures
 	)
+	check(
+		seed_manager.starting_planet_seed == first_seeds[3],
+		"The authored starting planet changed with the galaxy run seed.",
+		failures
+	)
 	seed_manager.start_new_run()
 	check(seed_manager.galaxy_systems.size() == SeedManagerScript.MAX_GALAXY_SYSTEMS, "Galaxy does not contain 64 systems.", failures)
 	check(seed_manager.get_available_next_systems().size() == 3, "Starting system does not expose three route choices.", failures)
@@ -89,6 +94,27 @@ func run_seed_foundation_tests() -> void:
 	seed_manager.start_new_run()
 	check(seed_manager.starship_escape_fuel_tons == 0, "Starting Starship escape fuel was not zero.", failures)
 	check(seed_manager.should_show_cargo_hauler_intro(), "Cargo hauler intro was not available at run start.", failures)
+	var intro_pages: Array[String] = seed_manager.get_cargo_hauler_intro_pages()
+	check(intro_pages.size() == 3, "Cargo Hauler onboarding does not contain three tutorial pages.", failures)
+	check(intro_pages[0].contains("Welcome to Quiet Reach"), "Cargo Hauler welcome page is missing.", failures)
+	check(intro_pages[1].contains("A / D") and intro_pages[1].contains("Left Mouse"), "Cargo Hauler controls page is incomplete.", failures)
+	check(
+		intro_pages[2].contains("fuel and ore")
+		and intro_pages[2].contains("getting real rich")
+		and intro_pages[2].contains("fuel gauge")
+		and intro_pages[2].contains("cargo hold")
+		and intro_pages[2].contains("game over"),
+		"Cargo Hauler gameplay-loop page is incomplete.",
+		failures
+	)
+	var shallow_scan_text: String = seed_manager.get_cargo_hauler_shallow_scan_text()
+	check(
+		shallow_scan_text.contains("first three copper, iron, and raw-fuel")
+		and shallow_scan_text.contains("first 300 meters")
+		and shallow_scan_text.contains("pixie dust"),
+		"Cargo Hauler shallow-scan transmission is incomplete.",
+		failures
+	)
 	seed_manager.mark_cargo_hauler_intro_shown()
 	check(not seed_manager.should_show_cargo_hauler_intro(), "Cargo hauler intro was not limited to one display.", failures)
 	seed_manager.enter_starting_planet()
@@ -130,12 +156,100 @@ func generate_starting_planet_signature() -> String:
 	var mining_scene := load("res://Scenes/AsteroidMining.tscn") as PackedScene
 	var mining_instance := mining_scene.instantiate()
 	root.add_child(mining_instance)
+	var onboarding_dialog_worked: bool = (
+		mining_instance.cargo_hauler_dialog != null
+		and mining_instance.cargo_hauler_dialog.dialog_text.contains("Welcome to Quiet Reach")
+		and mining_instance.cargo_hauler_dialog.get_ok_button().text == "Show Me the Controls"
+		and mining_instance.cargo_hauler_dialog.get_label().autowrap_mode
+			== TextServer.AUTOWRAP_WORD_SMART
+	)
+	mining_instance._on_cargo_hauler_intro_confirmed()
+	await process_frame
+	onboarding_dialog_worked = (
+		onboarding_dialog_worked
+		and mining_instance.cargo_hauler_dialog.dialog_text.contains("A / D")
+		and mining_instance.cargo_hauler_dialog.get_ok_button().text == "What's the Job?"
+	)
+	mining_instance._on_cargo_hauler_intro_confirmed()
+	await process_frame
+	onboarding_dialog_worked = (
+		onboarding_dialog_worked
+		and mining_instance.cargo_hauler_dialog.dialog_text.contains("getting real rich")
+		and mining_instance.cargo_hauler_dialog.get_ok_button().text == "Begin Mining"
+	)
+	mining_instance._on_cargo_hauler_intro_confirmed()
+	await process_frame
+	await process_frame
+	onboarding_dialog_worked = (
+		onboarding_dialog_worked
+		and mining_instance.cargo_hauler_dialog == null
+		and mining_instance.shallow_scan_dialog != null
+		and mining_instance.shallow_scan_dialog.dialog_text.contains("pixie dust")
+		and mining_instance.shallow_scan_dialog.get_ok_button().text == "Follow the Pixie Dust"
+		and mining_instance.shallow_scan_dialog.get_label().autowrap_mode
+			== TextServer.AUTOWRAP_WORD_SMART
+	)
+	mining_instance._on_shallow_scan_confirmed()
 	mining_instance.generate_rows_until(TEST_ROW_COUNT)
 	var signature: String = mining_instance.get_generated_planet_layout_signature(TEST_ROW_COUNT)
 	mining_instance.generate_rows_until(
 		mining_instance.get_core_vault_top_row() + mining_instance.core_vault_height_blocks + 2
 	)
 	last_planet_core_cell = mining_instance.planet_core_cell
+	var lander_column: int = mining_instance.get_lander_surface_column()
+	var ground_row: int = mining_instance.get_first_ground_row()
+	var shallow_copper_count := 0
+	var shallow_iron_count := 0
+	var shallow_bottom_row := ground_row + floori(
+		float(StartingPlanetBalance.SHALLOW_STARTER_ORE_DEPTH_METERS)
+		/ float(mining_instance.depth_meters_per_row)
+	)
+	for row in range(ground_row, shallow_bottom_row + 1):
+		for column in mining_instance.grid_width:
+			var shallow_type: int = mining_instance.block_types_by_cell.get(Vector2i(column, row), -1)
+			if shallow_type == mining_instance.BlockType.COPPER:
+				shallow_copper_count += 1
+			elif shallow_type == mining_instance.BlockType.IRON:
+				shallow_iron_count += 1
+	var guided_starter_cells: Array[Vector2i] = mining_instance.get_guided_starter_ore_cells()
+	var first_thousand_iron_count := 0
+	var first_thousand_bottom := ground_row + floori(
+		float(StartingPlanetBalance.EARLY_IRON_DEPTH_METERS) / float(mining_instance.depth_meters_per_row)
+	)
+	for row in range(ground_row, first_thousand_bottom + 1):
+		for column in mining_instance.grid_width:
+			if mining_instance.block_types_by_cell.get(Vector2i(column, row), -1) == mining_instance.BlockType.IRON:
+				first_thousand_iron_count += 1
+	var guided_cells_are_shallow := guided_starter_cells.all(
+		func(cell: Vector2i): return cell.y >= ground_row and cell.y < ground_row + 5
+	)
+	var alpha_systems_worked: bool = (
+		onboarding_dialog_worked
+		and guided_starter_cells.size() == 9
+		and guided_cells_are_shallow
+		and is_equal_approx(StartingPlanetBalance.SHALLOW_COPPER_CHANCE, 0.002145)
+		and is_equal_approx(StartingPlanetBalance.SHALLOW_RAW_FUEL_CHANCE, 0.0012675)
+		and is_equal_approx(StartingPlanetBalance.EARLY_IRON_CHANCE, 0.01625 * 1.25)
+		and shallow_copper_count >= 15
+		and shallow_iron_count > 3
+		and first_thousand_iron_count > shallow_iron_count
+		and mining_instance.block_types_by_cell.get(Vector2i(lander_column - 3, ground_row + 2), -1)
+			== mining_instance.BlockType.COPPER
+		and mining_instance.block_types_by_cell.get(Vector2i(lander_column + 3, ground_row + 2), -1)
+			== mining_instance.BlockType.RAWFUEL
+		and mining_instance.block_types_by_cell.get(Vector2i(lander_column - 6, ground_row + 3), -1)
+			== mining_instance.BlockType.IRON
+	)
+	var surface_balance: Dictionary = mining_instance.get_mining_balance_readout(mining_instance.BlockType.DIRT, 0)
+	var thousand_balance: Dictionary = mining_instance.get_mining_balance_readout(mining_instance.BlockType.DIRT, 1000)
+	var core_balance: Dictionary = mining_instance.get_mining_balance_readout(mining_instance.BlockType.DIRT, 7500)
+	alpha_systems_worked = (
+		alpha_systems_worked
+		and is_equal_approx(float(surface_balance["depth_multiplier"]), 1.0)
+		and is_equal_approx(float(thousand_balance["depth_multiplier"]), 1.16)
+		and is_equal_approx(float(core_balance["depth_multiplier"]), 2.2)
+		and not mining_instance.create_save_data().has("active_mining_damage")
+	)
 	var core_barrier_valid := true
 	var valuable_barrier_blocks := 0
 	var barrier_start_row: int = mining_instance.get_first_ground_row() + 700
@@ -204,8 +318,8 @@ func generate_starting_planet_signature() -> String:
 	})
 	var base_drill: float = mining_instance.base_upgrade_stats["drill_damage_per_second"]
 	var upgrade_reassigned: bool = (
-		is_equal_approx(level_five_drill, base_drill * pow(1.1, 5))
-		and is_equal_approx(mining_instance.drill_damage_per_second, base_drill * 1.1)
+		is_equal_approx(level_five_drill, base_drill * pow(1.2, 5))
+		and is_equal_approx(mining_instance.drill_damage_per_second, base_drill * 1.2)
 	)
 	var teleported: bool = mining_instance.get_current_depth_meters() == 3000
 	var ground_caves_valid: bool = mining_instance.planned_ground_encounters.size() >= 3
@@ -293,6 +407,13 @@ func generate_starting_planet_signature() -> String:
 		and laser_hit_demon
 		and blast_defeated_demon
 	)
+	mining_instance.ground_encounter_system.mark_demon_defeated(first_ground_encounter["encounter_id"])
+	mining_instance.ground_encounter_system.mark_demon_defeated(first_ground_encounter["encounter_id"])
+	var portal_closed_after_cave_defeat: bool = (
+		bool(first_ground_encounter.get("defeated", false))
+		and not mining_instance.ground_encounter_system.portal_nodes[first_ground_encounter["encounter_id"]].active
+		and mining_instance.enemy_contact_made
+	)
 	mining_instance.capacitor_energy = 1000.0
 	mining_instance.shield_health = mining_instance.max_shield_health
 	mining_instance.update_capacitor_and_shield(1.0)
@@ -352,19 +473,122 @@ func generate_starting_planet_signature() -> String:
 		all_mk_one_ids_defined
 		and copper_yield_range == Vector2i(3, 10)
 		and gold_yield_range == Vector2i(2, 7)
-		and is_equal_approx(mining_instance.engine_charge_per_second, 726.0)
-		and int(mining_instance.find_upgrade_definition("miner_power_unit_output").get("max_level", 0)) == 7
+		and is_equal_approx(mining_instance.engine_charge_per_second, 864.0)
+		and int(mining_instance.find_upgrade_definition("miner_power_unit_output").get("max_level", 0)) == 5
 		and mining_instance.migrate_saved_capacitor_energy(12.5, 1) == 1250.0
 		and mining_instance.migrate_saved_capacitor_energy(1250.0, mining_instance.POWER_SCALE_VERSION) == 1250.0
-		and is_equal_approx(mining_instance.fuel_consumption_multiplier, pow(0.9, 2))
-		and is_equal_approx(mining_instance.move_speed, float(mining_instance.base_upgrade_stats["move_speed"]) * pow(1.1, 2))
-		and is_equal_approx(mining_instance.mobility_power_consumption_per_second, 230.0)
+		and is_equal_approx(mining_instance.fuel_consumption_multiplier, pow(1.0 / 1.2, 2))
+		and is_equal_approx(mining_instance.move_speed, float(mining_instance.base_upgrade_stats["move_speed"]) * pow(1.2, 2))
+		and is_equal_approx(mining_instance.mobility_power_consumption_per_second, 198.0)
 		and mining_instance.armor_rating == 2
 		and DamageRules.calculate_armored_damage(10.0, 3) == 7
 		and DamageRules.calculate_armored_damage(2.0, 99) == 1
-		and is_equal_approx(mining_instance.laser_damage, pow(1.1, 2))
+		and is_equal_approx(mining_instance.laser_damage, pow(1.2, 2))
 		and is_equal_approx(mining_instance.weapon_critical_chance, 0.04)
 	)
+	for category_upgrades in mining_instance.upgrade_definitions.values():
+		for definition in category_upgrades:
+			if str(definition.get("id", "")) == "planetary_fuel_depot":
+				continue
+			alpha_systems_worked = alpha_systems_worked and int(definition.get("max_level", 0)) == 5
+	alpha_systems_worked = (
+		alpha_systems_worked
+		and mining_instance.get_miner_component_category_names().has("Sensor Suite")
+		and not mining_instance.get_miner_component_category_names().has("Retained Miner Upgrades")
+		and mining_instance.upgrade_definitions.has("Sensor Suite")
+	)
+	var drill_upgrade: Dictionary = mining_instance.find_upgrade_definition("miner_drill_efficiency")
+	var sensor_upgrade: Dictionary = mining_instance.find_upgrade_definition("miner_sensor_strength")
+	var drill_yield_upgrade: Dictionary = mining_instance.find_upgrade_definition("miner_drill_yield")
+	var upgrade_bar_recipes_valid := true
+	for category_upgrades in mining_instance.upgrade_definitions.values():
+		for definition in category_upgrades:
+			var upgrade_id: String = str(definition.get("id", ""))
+			for level in [0, 1]:
+				var permits_raw_starter_ore: bool = (
+					level == 0
+					and upgrade_id == "miner_sensor_strength"
+				)
+				for cost in mining_instance.get_upgrade_costs(definition, level):
+					if str(cost.get("resource", "")) in ["Copper", "Iron", "Gold"]:
+						upgrade_bar_recipes_valid = upgrade_bar_recipes_valid and permits_raw_starter_ore
+	alpha_systems_worked = (
+		alpha_systems_worked
+		and upgrade_bar_recipes_valid
+		and mining_instance.format_upgrade_costs(mining_instance.get_upgrade_costs(drill_upgrade, 0)).contains("Copper Bar")
+		and mining_instance.format_upgrade_costs(mining_instance.get_upgrade_costs(drill_upgrade, 1)).contains("Copper Bar")
+		and mining_instance.format_upgrade_costs(mining_instance.get_upgrade_costs(sensor_upgrade, 0)).contains("Copper")
+		and not mining_instance.format_upgrade_costs(mining_instance.get_upgrade_costs(sensor_upgrade, 0)).contains("Copper Bar")
+		and mining_instance.format_upgrade_costs(mining_instance.get_upgrade_costs(sensor_upgrade, 1)).contains("Copper Bar")
+		and mining_instance.format_upgrade_costs(mining_instance.get_upgrade_costs(sensor_upgrade, 1)).contains("Iron Bar")
+		and mining_instance.format_upgrade_costs(mining_instance.get_upgrade_costs(drill_yield_upgrade, 0)).contains("Copper Bar")
+		and mining_instance.format_upgrade_costs(mining_instance.get_upgrade_costs(drill_yield_upgrade, 0)).contains("Iron Bar")
+	)
+	var saved_resources_for_relevance: Dictionary = mining_instance.resources.duplicate(true)
+	var saved_lander_for_relevance: Dictionary = mining_instance.cargo_hold_resources.duplicate(true)
+	var saved_metrics_for_relevance: Dictionary = mining_instance.progression_metrics.duplicate(true)
+	var saved_levels_for_relevance: Dictionary = mining_instance.upgrade_levels.duplicate(true)
+	var saved_enemy_contact: bool = mining_instance.enemy_contact_made
+	var gold_upgrade: Dictionary = mining_instance.find_upgrade_definition("miner_mobility_vertical_climb")
+	var thermal_upgrade: Dictionary = mining_instance.find_upgrade_definition("miner_thermal_heat_dispersion")
+	mining_instance.resources.clear()
+	mining_instance.cargo_hold_resources.clear()
+	mining_instance.progression_metrics["resources_earned"] = {}
+	mining_instance.progression_metrics["resources_spent"] = {}
+	mining_instance.upgrade_levels.clear()
+	mining_instance.enemy_contact_made = false
+	var sensor_only_first_upgrade: bool = (
+		mining_instance.is_upgrade_relevant(sensor_upgrade)
+		and not mining_instance.is_upgrade_relevant(drill_upgrade)
+		and not mining_instance.is_upgrade_relevant(thermal_upgrade)
+	)
+	mining_instance.upgrade_levels["miner_mobility_vertical_climb"] = 0
+	var hidden_before_relevant: bool = not mining_instance.is_upgrade_relevant(gold_upgrade)
+	mining_instance.resources["Copper"] = 1
+	mining_instance.resources["Iron"] = 1
+	mining_instance.resources["Gold"] = 1
+	mining_instance.upgrade_levels["miner_sensor_strength"] = 1
+	var shown_after_relevant: bool = mining_instance.is_upgrade_relevant(gold_upgrade)
+	var combat_systems_hidden_before_contact: bool = not mining_instance.is_upgrade_relevant(thermal_upgrade)
+	mining_instance.enemy_contact_made = true
+	var combat_systems_shown_after_contact: bool = mining_instance.is_upgrade_relevant(thermal_upgrade)
+	mining_instance.resources = saved_resources_for_relevance
+	mining_instance.cargo_hold_resources = saved_lander_for_relevance
+	mining_instance.progression_metrics = saved_metrics_for_relevance
+	mining_instance.upgrade_levels = saved_levels_for_relevance
+	mining_instance.enemy_contact_made = saved_enemy_contact
+	alpha_systems_worked = (
+		alpha_systems_worked
+		and sensor_only_first_upgrade
+		and hidden_before_relevant
+		and shown_after_relevant
+		and combat_systems_hidden_before_contact
+		and combat_systems_shown_after_contact
+	)
+	mining_instance.player_marker.position = mining_instance.mine_tiles.map_to_local(Vector2i(20, ground_row + 20))
+	mining_instance.revealed_cells.clear()
+	mining_instance.upgrade_levels = {"miner_sensor_strength": 2, "miner_drill_efficiency": 1}
+	mining_instance.recalculate_stats_from_upgrade_levels()
+	var sensor_center: Vector2i = mining_instance.get_player_cell()
+	var sensor_one_cell: Vector2i = sensor_center + Vector2i(3, 0)
+	var sensor_too_far_cell: Vector2i = sensor_center + Vector2i(4, 0)
+	mining_instance.block_types_by_cell[sensor_one_cell] = mining_instance.BlockType.COPPER
+	mining_instance.block_types_by_cell[sensor_too_far_cell] = mining_instance.BlockType.COPPER
+	var level_two_detections: Array[Vector2i] = mining_instance.get_detectable_hidden_ore_cells()
+	mining_instance.upgrade_levels["miner_sensor_strength"] = 4
+	mining_instance.recalculate_stats_from_upgrade_levels()
+	var sensor_two_cell: Vector2i = sensor_center + Vector2i(5, 0)
+	mining_instance.block_types_by_cell[sensor_two_cell] = mining_instance.BlockType.IRON
+	var level_four_detections: Array[Vector2i] = mining_instance.get_detectable_hidden_ore_cells()
+	alpha_systems_worked = (
+		alpha_systems_worked
+		and level_two_detections.has(sensor_one_cell)
+		and not level_two_detections.has(sensor_too_far_cell)
+		and level_four_detections.has(sensor_two_cell)
+		and not mining_instance.can_drill_block_type(mining_instance.BlockType.DIAMOND)
+	)
+	mining_instance.upgrade_levels["miner_drill_efficiency"] = 2
+	alpha_systems_worked = alpha_systems_worked and mining_instance.can_drill_block_type(mining_instance.BlockType.DIAMOND)
 	mining_instance.upgrade_levels = {
 		"miner_fuel_tank": 2,
 		"miner_engine_power": 3,
@@ -433,28 +657,75 @@ func generate_starting_planet_signature() -> String:
 		and int(mining_instance.resources.get("Silicone", 0)) == silicone_before + 2
 	)
 	var miner_copper_before_sale: int = int(mining_instance.resources.get("Copper", 0))
+	var doubled_sale_values_worked: bool = (
+		mining_instance.get_resource_value("Silicone") == 4
+		and mining_instance.get_resource_value("Copper") == 6
+		and mining_instance.get_resource_value("Iron") == 10
+		and mining_instance.get_resource_value("Gold") == 18
+		and mining_instance.get_resource_value("Raw Fuel") == 8
+		and mining_instance.get_resource_value("Treasure") == 24
+		and mining_instance.get_resource_value("Diamond") == 36
+		and mining_instance.get_resource_value("Warp Gems") == 60
+		and mining_instance.get_resource_value("Black Hole Crystals") == 90
+		and mining_instance.get_resource_value("Copper Bar") == 27
+		and mining_instance.get_resource_value("Iron Bar") == 45
+		and mining_instance.get_resource_value("Gold Bar") == 81
+		and mining_instance.get_resource_value("Silicone Wafer") == 6
+		and mining_instance.get_resource_value("Explosive Charge") == 5
+		and mining_instance.get_sellable_resource_names().has("Copper Bar")
+		and mining_instance.get_sellable_resource_names().has("Iron Bar")
+		and mining_instance.get_sellable_resource_names().has("Gold Bar")
+		and mining_instance.get_sellable_resource_names().has("Silicone Wafer")
+		and mining_instance.get_sellable_resource_names().has("Explosive Charge")
+	)
+	mining_instance.recent_resource_sales.clear()
 	mining_instance.cargo_hold_resources["Copper"] = 12
 	var credits_before_sale: int = mining_instance.credits
+	var expected_copper_sale: int = mining_instance.get_resource_sale_quote("Copper", 12)
 	mining_instance.sell_resource("Copper", 1)
 	mining_instance.sell_resource("Copper", 10)
 	mining_instance.sell_resource("Copper", -1)
 	var tiered_lander_sale_worked: bool = (
 		int(mining_instance.cargo_hold_resources.get("Copper", 0)) == 0
 		and int(mining_instance.resources.get("Copper", 0)) == miner_copper_before_sale
-		and mining_instance.credits == credits_before_sale + 12 * mining_instance.get_resource_value("Copper")
+		and mining_instance.credits == credits_before_sale + expected_copper_sale
+		and mining_instance.get_current_resource_sale_price("Copper") < mining_instance.get_resource_value("Copper")
+	)
+	var depressed_copper_price: int = mining_instance.get_current_resource_sale_price("Copper")
+	mining_instance.is_shop_open = false
+	mining_instance.update_market_pressure(mining_instance.market_pressure_recovery_seconds_per_unit * 20.0)
+	var market_price_recovery_worked: bool = (
+		mining_instance.get_current_resource_sale_price("Copper") > depressed_copper_price
 	)
 	mining_instance.cargo_hold_resources["Copper"] = 2
 	mining_instance.cargo_hold_resources["Iron"] = 3
 	var miner_iron_before_sell_all: int = int(mining_instance.resources.get("Iron", 0))
 	var credits_before_sell_all: int = mining_instance.credits
+	var expected_sell_all_quote: int = mining_instance.get_sell_all_quote()
 	mining_instance._on_sell_all_pressed()
 	var lander_sell_all_worked: bool = (
 		int(mining_instance.cargo_hold_resources.get("Copper", 0)) == 0
 		and int(mining_instance.cargo_hold_resources.get("Iron", 0)) == 0
 		and int(mining_instance.resources.get("Iron", 0)) == miner_iron_before_sell_all
-		and mining_instance.credits == credits_before_sell_all
-			+ 2 * mining_instance.get_resource_value("Copper")
-			+ 3 * mining_instance.get_resource_value("Iron")
+		and mining_instance.credits == credits_before_sell_all + expected_sell_all_quote
+	)
+	mining_instance.cargo_hold_resources.clear()
+	mining_instance.resources.clear()
+	mining_instance.resources["Raw Fuel"] = 1
+	mining_instance.lander_mining_fuel_kg = 0
+	mining_instance.lander_rocket_fuel_tons = 0
+	var expected_processed_fuel_kg: int = mining_instance.get_mining_fuel_processing_output_kg()
+	var fuel_button_shows_kg: bool = mining_instance.get_process_raw_fuel_button_text().contains(
+		"+%d kg Mining Fuel" % expected_processed_fuel_kg
+	)
+	mining_instance.process_raw_fuel_from_storage()
+	var instant_fuel_processing_worked: bool = (
+		fuel_button_shows_kg
+		and expected_processed_fuel_kg > 0
+		and mining_instance.lander_mining_fuel_kg == expected_processed_fuel_kg
+		and mining_instance.lander_rocket_fuel_tons == mining_instance.rocket_fuel_tons_per_raw_fuel
+		and not mining_instance.fuel_processing_active
+		and is_zero_approx(mining_instance.fuel_processing_remaining_seconds)
 	)
 	mining_instance.ammo_fabricator_components = {"explosive_powder": 0, "explosive_casing": 0}
 	mining_instance.ammo_fabricator_stock = {"explosive_charge": 0}
@@ -491,18 +762,220 @@ func generate_starting_planet_signature() -> String:
 		and mining_instance.consume_loaded_explosive_charge()
 		and mining_instance.get_loaded_explosive_charges() == 1
 	)
+	mining_instance.fabricator_unlocked = true
+	mining_instance.fabricator_output.clear()
+	mining_instance.cargo_hold_resources.clear()
+	var silicone_wafer_recipe: Dictionary = StartingPlanetBalance.FABRICATOR_RECIPES["silicone_wafer"]
+	var circuit_recipe: Dictionary = StartingPlanetBalance.FABRICATOR_RECIPES["basic_circuit"]
+	var gps_recipe: Dictionary = StartingPlanetBalance.FABRICATOR_RECIPES["gps_marker"]
+	var fabrication_recipe_expansion_worked: bool = (
+		int(silicone_wafer_recipe["inputs"]["Silicone"]) == 1
+		and int(silicone_wafer_recipe["amount"]) == 2
+		and int(circuit_recipe["inputs"]["Silicone Wafer"]) == 1
+		and int(gps_recipe["inputs"]["Iron Bar"]) == 1
+		and int(gps_recipe["inputs"]["Basic Circuit"]) == 1
+		and int(gps_recipe["amount"]) == 5
+		and mining_instance.get_cargo_display_resource_names({"Copper Bar": 1}).count("Copper Bar") == 1
+	)
+	var first_planet_treasure_candidates: Array[Dictionary] = mining_instance.get_available_treasure_upgrade_candidates()
+	var first_planet_treasure_targets_miner_only := not first_planet_treasure_candidates.is_empty()
+	for candidate in first_planet_treasure_candidates:
+		first_planet_treasure_targets_miner_only = (
+			first_planet_treasure_targets_miner_only
+			and mining_instance.get_miner_component_category_names().has(str(candidate.get("category", "")))
+		)
+	mining_instance.resources.clear()
+	mining_instance.resources["GPS Marker"] = 1
+	mining_instance.gps_marker_cells.clear()
+	mining_instance.is_paused = false
+	mining_instance.is_shop_open = false
+	mining_instance.is_game_over = false
+	var placed_gps_cell: Vector2i = mining_instance.get_player_cell()
+	var gps_marker_worked: bool = (
+		mining_instance.place_gps_marker()
+		and mining_instance.gps_marker_cells.has(placed_gps_cell)
+		and int(mining_instance.resources.get("GPS Marker", 0)) == 0
+		and mining_instance.gps_marker_visuals.size() == 1
+	)
+	mining_instance.resources.clear()
+	mining_instance.resources["Copper"] = 6
+	mining_instance.resources["Iron"] = 3
+	mining_instance.resources["Gold"] = 3
+	mining_instance.smelt_all_bars()
+	fabrication_recipe_expansion_worked = (
+		fabrication_recipe_expansion_worked
+		and int(mining_instance.cargo_hold_resources.get("Copper Bar", 0)) == 2
+		and int(mining_instance.cargo_hold_resources.get("Iron Bar", 0)) == 1
+		and int(mining_instance.cargo_hold_resources.get("Gold Bar", 0)) == 1
+	)
+	mining_instance.cargo_hold_resources.clear()
+	mining_instance.resources.clear()
+	mining_instance.resources["Raw Fuel"] = 1
+	mining_instance.resources["Copper Bar"] = 2
+	mining_instance.resources["Iron Wire"] = 1
+	var explosive_recipe: Dictionary = StartingPlanetBalance.FABRICATOR_RECIPES["explosive_charge"]
+	mining_instance.fabricate_recipe("explosive_charge")
+	var ten_charge_recipe_worked: bool = (
+		int(explosive_recipe["inputs"]["Raw Fuel"]) == 1
+		and int(explosive_recipe["inputs"]["Copper Bar"]) == 2
+		and int(explosive_recipe["inputs"]["Iron Wire"]) == 1
+		and int(explosive_recipe["amount"]) == 10
+		and mining_instance.get_fabricator_recipe_button_text(explosive_recipe).contains(
+			"1 Raw Fuel + 2 Copper Bar + 1 Iron Wire -> 10 Explosive Charge"
+		)
+		and int(mining_instance.cargo_hold_resources.get("Explosive Charge", 0)) == 10
+		and int(mining_instance.resources.get("Raw Fuel", 0)) == 0
+		and int(mining_instance.resources.get("Copper Bar", 0)) == 0
+		and int(mining_instance.resources.get("Iron Wire", 0)) == 0
+	)
 	mining_instance.is_shop_open = true
 	mining_instance.show_ammo_fabricator_view()
 	var fabricator_ui_worked: bool = (
-		mining_instance.shop_title_label.text == "Ammo Fabricator"
-		and mining_instance.ammo_fabricator_status_label.text.contains("Explosive Powder")
-		and tree_has_button_text(mining_instance.shop_content, "Assemble 1 Explosive Charge (1 Powder + 1 Casing)")
+		mining_instance.shop_title_label.text == "Lander Fabricator"
+		and mining_instance.ammo_fabricator_status_label.text.contains("Miner Loaded Charges")
+		and mining_instance.fabricator_available_materials_label != null
+		and mining_instance.fabricator_available_materials_label.text.contains("MINER + LANDER")
+		and not mining_instance.fabricator_available_materials_label.text.contains("Copper: 0")
 		and tree_has_button_text(mining_instance.shop_content, "Load All")
+		and tree_has_button_text(mining_instance.shop_content, "Smelt All Bars")
+		and mining_instance.fabricator_materials_list != null
+		and mining_instance.shop_master_tabs != null
+		and tree_has_button_text(mining_instance.shop_master_tabs, "Home")
+		and tree_has_button_text(mining_instance.shop_master_tabs, "Upgrades")
+		and tree_has_button_text(mining_instance.shop_master_tabs, "Lander")
+		and tree_has_button_text(mining_instance.shop_master_tabs, "Fabricator")
 	)
+	mining_instance.handle_shop_back()
+	var menu_back_navigation_worked: bool = (
+		mining_instance.shop_title_label.text == "Lander"
+		and InputMap.has_action(&"menu_back")
+		and mining_instance.pause_menu.menu_back_binding_button != null
+	)
+	mining_instance.fabricator_output.clear()
+	mining_instance.cargo_hold_resources.clear()
+	mining_instance.resources["Copper"] = 3
+	mining_instance.cargo_hold_resources["Test Cargo"] = mining_instance.cargo_hold_capacity
+	mining_instance.fabricate_recipe("copper_bar")
+	var full_cargo_holds_output: bool = (
+		not mining_instance.fabricator_output.is_empty()
+		and mining_instance.get_ammo_fabricator_status_text().contains("CARGO FULL")
+	)
+	mining_instance.cargo_hold_resources.erase("Test Cargo")
+	var output_transferred: bool = mining_instance.try_transfer_fabricator_output()
+	mining_instance.show_market_view()
+	var fabricated_cargo_visible: bool = (
+		tree_has_label_text(mining_instance.lander_cargo_hold_list, "Copper Bar x1")
+		and mining_instance.get_resource_icon_tile_coords("Copper Bar")
+			== mining_instance.get_resource_icon_tile_coords("Copper")
+		and mining_instance.get_cargo_hold_count() >= 1
+	)
+	var copper_bar_market_label := find_label_by_text(mining_instance.lander_cargo_hold_list, "Copper Bar x1")
+	var market_layout_worked: bool = (
+		mining_instance.lander_cargo_hold_list.get_parent() is ScrollContainer
+		and copper_bar_market_label != null
+		and tree_has_button_text(copper_bar_market_label.get_parent(), "1\n+27")
+	)
+	var saved_miner_resources: Dictionary = mining_instance.resources.duplicate(true)
+	mining_instance.developer_test_panel.close()
+	mining_instance.handle_escape_close()
+	var escape_closes_whole_menu: bool = not mining_instance.is_shop_open
+	mining_instance.resources.clear()
+	mining_instance.resources["Copper"] = 2
+	mining_instance.open_mining_inventory()
+	var mining_inventory_opened: bool = (
+		mining_instance.is_mining_inventory_open()
+		and mining_instance.is_paused
+		and tree_has_label_text(mining_instance.mining_inventory_list, "Copper x2")
+		and tree_has_button_text(mining_instance.mining_inventory_list, "Dump 1")
+	)
+	mining_instance.dump_miner_resource("Copper")
+	var mining_inventory_dumped_one: bool = int(mining_instance.resources.get("Copper", 0)) == 1
+	mining_instance.close_mining_inventory()
+	var mining_inventory_worked: bool = (
+		mining_inventory_opened
+		and mining_inventory_dumped_one
+		and not mining_instance.is_mining_inventory_open()
+	)
+	mining_instance.developer_test_panel.open()
+	mining_instance.resources.clear()
+	mining_instance.resources["Test Cargo"] = mining_instance.inventory_capacity
+	mining_instance.update_hud()
+	var miner_cargo_full_notified: bool = (
+		mining_instance.cargo_full_notification != null
+		and mining_instance.cargo_full_notification.visible
+		and mining_instance.cargo_full_notification.text.contains("CARGO HOLD FULL")
+	)
+	mining_instance.resources.clear()
+	mining_instance.update_hud()
+	miner_cargo_full_notified = (
+		miner_cargo_full_notified
+		and not mining_instance.cargo_full_notification.visible
+	)
+	mining_instance.resources = saved_miner_resources
+	alpha_systems_worked = (
+		alpha_systems_worked
+		and fabrication_recipe_expansion_worked
+		and first_planet_treasure_targets_miner_only
+		and full_cargo_holds_output
+		and output_transferred
+		and fabricated_cargo_visible
+		and market_layout_worked
+		and escape_closes_whole_menu
+		and mining_inventory_worked
+		and miner_cargo_full_notified
+		and mining_instance.fabricator_output.is_empty()
+		and int(mining_instance.cargo_hold_resources.get("Copper Bar", 0)) == 1
+	)
+	var lift_cell := Vector2i(10, ground_row + 12)
+	for shaft_y in range(ground_row, lift_cell.y):
+		mining_instance.block_types_by_cell.erase(Vector2i(lift_cell.x, shaft_y))
+		mining_instance.visual_mine_tiles.erase_cell(Vector2i(lift_cell.x, shaft_y))
+	for foundation_offset in range(-1, 2):
+		mining_instance.block_types_by_cell[lift_cell + Vector2i(foundation_offset, 1)] = mining_instance.BlockType.ROCK
+	mining_instance.player_marker.position = mining_instance.mine_tiles.map_to_local(lift_cell)
+	mining_instance.resources["Iron"] = 100
+	mining_instance.resources["Copper"] = 100
+	mining_instance.resources["Basic Circuit"] = 1
+	var lift_cost: Dictionary = mining_instance.StartingPlanetBalance.get_lift_cost(13)
+	var lift_built: bool = mining_instance.try_construct_lift_station(true)
+	var lift_reached_anchor: bool = lift_built and mining_instance.try_use_nearby_lift()
+	var anchor_cell: Vector2i = mining_instance.get_player_cell()
+	var lift_returned: bool = lift_reached_anchor and mining_instance.try_use_nearby_lift()
+	alpha_systems_worked = (
+		alpha_systems_worked
+		and int(lift_cost["Iron"]) == 4
+		and int(lift_cost["Copper"]) == 5
+		and mining_instance.lift_stations.size() == 1
+		and anchor_cell == Vector2i(lift_cell.x, ground_row - 1)
+		and lift_returned
+		and mining_instance.get_player_cell() == lift_cell
+	)
+	mining_instance.resources.clear()
+	mining_instance.cargo_hold_resources.clear()
+	mining_instance.resources["Diamond"] = 7
 	mining_instance.show_shop_main_view()
 	mining_instance.is_shop_open = false
 	mining_instance.hull_health = 73
 	mining_instance.credits = 30
+	var saved_active_fuel: float = mining_instance.fuel_seconds
+	var saved_max_fuel: float = mining_instance.max_fuel_seconds
+	var saved_lander_mining_fuel: int = mining_instance.lander_mining_fuel_kg
+	mining_instance.max_fuel_seconds = 60.0
+	mining_instance.fuel_seconds = 25.0
+	mining_instance.lander_mining_fuel_kg = 20
+	var refuel_capacity_visible: bool = (
+		mining_instance.get_refuel_button_text().contains("Tank: 25 / 60 kg")
+		and mining_instance.get_miner_fuel_tank_capacity_kg() == 60
+		and mining_instance.get_current_miner_fuel_kg() == 25
+	)
+	mining_instance.lander_mining_fuel_kg = 0
+	refuel_capacity_visible = (
+		refuel_capacity_visible
+		and mining_instance.get_refuel_button_text().contains("Tank: 25 / 60 kg")
+	)
+	mining_instance.fuel_seconds = saved_active_fuel
+	mining_instance.max_fuel_seconds = saved_max_fuel
+	mining_instance.lander_mining_fuel_kg = saved_lander_mining_fuel
 	var repair_cost_correct: bool = mining_instance.get_full_hull_repair_credit_cost() == 27
 	var repair_button_order_correct: bool = (
 		mining_instance.refuel_button.get_index() < mining_instance.repair_hull_button.get_index()
@@ -510,6 +983,23 @@ func generate_starting_planet_signature() -> String:
 	)
 	mining_instance._on_repair_hull_pressed()
 	var hull_repair_worked: bool = mining_instance.hull_health == 100 and mining_instance.credits == 3
+	var saved_rocket_fuel_before_warning: int = mining_instance.lander_rocket_fuel_tons
+	mining_instance.lander_rocket_fuel_tons = mining_instance.return_to_starship_required_rocket_fuel_tons
+	mining_instance._on_return_to_starship_pressed()
+	var departure_warning: AcceptDialog = null
+	for child in mining_instance.get_children():
+		if child is AcceptDialog and (child as AcceptDialog).title == "The Greatest Treasure":
+			departure_warning = child as AcceptDialog
+			break
+	var early_departure_warning_worked: bool = (
+		not mining_instance.can_return_to_starship()
+		and departure_warning != null
+		and departure_warning.dialog_text.contains("greatest treasure")
+		and departure_warning.dialog_text.contains("demons")
+	)
+	if departure_warning != null:
+		departure_warning.queue_free()
+	mining_instance.lander_rocket_fuel_tons = saved_rocket_fuel_before_warning
 	var core_pickup_result: Dictionary = mining_instance.mine_target_cell(mining_instance.planet_core_cell, false)
 	var core_boss_started: bool = (
 		core_pickup_result.get("resource_name", "") == "Planet Core"
@@ -553,6 +1043,63 @@ func generate_starting_planet_signature() -> String:
 		and progressive_waves_valid
 		and core_boss_completed
 	)
+	var mining_hud: MiningHud = mining_instance.modular_mining_hud
+	var saved_hud_resources: Dictionary = mining_instance.resources.duplicate(true)
+	mining_instance.resources.clear()
+	mining_instance.resources["Copper"] = 1
+	mining_instance.update_hud()
+	var cargo_count_label := find_label_by_text(mining_instance.hud_cargo_icons, "x1")
+	var mining_cargo_contrast_worked: bool = (
+		cargo_count_label != null
+		and cargo_count_label.get_theme_font_size("font_size") >= 18
+		and cargo_count_label.get_theme_color("font_color") == Color.WHITE
+		and cargo_count_label.get_theme_color("font_outline_color") == Color.BLACK
+		and cargo_count_label.get_theme_constant("outline_size") >= 3
+	)
+	mining_instance.resources = saved_hud_resources
+	mining_instance.update_hud()
+	mining_instance.is_shop_open = false
+	mining_instance.is_paused = false
+	var initial_map_cell_size: float = mining_instance.planet_map_overlay.cell_size
+	mining_instance.toggle_planet_map()
+	await process_frame
+	var map_opened: bool = mining_instance.planet_map_overlay.visible and mining_instance.is_paused
+	mining_instance.planet_map_overlay.zoom_at(Vector2(300.0, 300.0), 1.2)
+	var map_zoomed: bool = mining_instance.planet_map_overlay.cell_size > initial_map_cell_size
+	mining_instance.close_planet_map()
+	var planet_map_worked: bool = map_opened and map_zoomed and not mining_instance.planet_map_overlay.visible and not mining_instance.is_paused
+	mining_instance.is_on_ground = false
+	var airborne_drill_blocked: bool = not mining_instance.can_use_mining_drill()
+	mining_instance.is_on_ground = true
+	var grounded_drill_allowed: bool = mining_instance.can_use_mining_drill()
+	var grounded_drilling_worked: bool = airborne_drill_blocked and grounded_drill_allowed
+	mining_instance.trigger_death()
+	var death_menu_worked: bool = (
+		mining_instance.is_game_over
+		and mining_instance.is_paused
+		and mining_instance.game_over_actions.visible
+		and tree_has_button_text(mining_instance.game_over_actions, "Load Last Save")
+		and tree_has_button_text(mining_instance.game_over_actions, "New Game")
+		and tree_has_button_text(mining_instance.game_over_actions, "Quit")
+	)
+	mining_instance.is_game_over = false
+	mining_instance.is_paused = false
+	mining_instance.game_over_actions.visible = false
+	mining_instance.game_over_label.visible = false
+	mining_hud.set_engine_levels(25.0, 100.0, 0.74)
+	var fuel_warning_activated: bool = mining_hud.hud_warning_active
+	mining_hud._process(0.0625)
+	var warning_visibly_pulsed: bool = mining_hud.warning_overlay.color.a > 0.0
+	mining_hud.set_engine_levels(26.0, 100.0, 0.75)
+	var heat_warning_activated: bool = mining_hud.hud_warning_active
+	mining_hud.set_engine_levels(26.0, 100.0, 0.74)
+	var hud_warning_worked: bool = (
+		fuel_warning_activated
+		and warning_visibly_pulsed
+		and heat_warning_activated
+		and not mining_hud.hud_warning_active
+		and is_zero_approx(mining_hud.warning_overlay.color.a)
+	)
 	last_mining_abilities_worked = (
 		radial_targets.size() == 9
 		and directional_targets_correct
@@ -567,8 +1114,21 @@ func generate_starting_planet_signature() -> String:
 		and mining_instance.max_fabricated_explosive_charges == 20
 		and mining_instance.max_miner_explosive_charges == 10
 		and fabrication_loop_worked
+		and ten_charge_recipe_worked
 		and fabricator_ui_worked
+		and menu_back_navigation_worked
+		and instant_fuel_processing_worked
+		and gps_marker_worked
+		and market_price_recovery_worked
+		and grounded_drilling_worked
+		and death_menu_worked
+		and early_departure_warning_worked
+		and mining_cargo_contrast_worked
+		and planet_map_worked
+		and mining_instance.shop_stat_labels.size() == 7
+		and (mining_instance.shop_stat_labels["credits"] as Label).get_theme_font_size("font_size") >= 18
 		and ground_enemy_foundation_worked
+		and portal_closed_after_cave_defeat
 		and developer_cave_navigation_worked
 		and is_equal_approx(
 			mining_instance.get_ability_block_removal_delay(),
@@ -579,11 +1139,14 @@ func generate_starting_planet_signature() -> String:
 		and silicone_drop_rules_worked
 		and tiered_lander_sale_worked
 		and lander_sell_all_worked
+		and doubled_sale_values_worked
 		and mining_instance.pause_menu.settings_button != null
 		and mining_instance.pause_menu.mouse_directed_e_toggle != null
 		and mining_instance.modular_mining_hud != null
 		and mining_instance.modular_mining_hud.name == "ModularMiningHUD"
 		and mining_instance.modular_mining_hud.depth_display != null
+		and mining_instance.modular_mining_hud.warning_overlay != null
+		and hud_warning_worked
 		and mining_instance.modular_mining_hud.design_root.get_node("Housing").size == MiningHud.DESIGN_SIZE
 		and mining_instance.modular_mining_hud.size.x <= MiningHud.DISPLAY_SIZE.x + 0.1
 		and mining_instance.modular_mining_hud.size.y <= MiningHud.DISPLAY_SIZE.y + 0.1
@@ -624,6 +1187,7 @@ func generate_starting_planet_signature() -> String:
 		and mining_instance.mining_effects.get_ore_text_font_size(6, 2, 10) > mining_instance.mining_effects.floating_text_font_size
 		and mining_instance.mining_effects.get_ore_text_font_size(6, 2, 10) < mining_instance.mining_effects.maximum_roll_font_size
 		and repair_cost_correct
+		and refuel_capacity_visible
 		and repair_button_order_correct
 		and hull_repair_worked
 		and mining_instance.game_over_label.text == mining_instance.STANDARD_DEATH_MESSAGE
@@ -665,6 +1229,9 @@ func generate_starting_planet_signature() -> String:
 		and bool(mining_instance.planned_ground_encounters[0].get("triggered", false)) == saved_ground_encounter_triggered
 		and mining_instance.ground_encounter_system.demons.size() == saved_active_demon_count
 		and mining_instance.get_generated_planet_layout_signature(mining_instance.generated_row_count) == saved_layout_signature
+		and mining_instance.lift_stations.size() == 1
+		and float(mining_instance.progression_metrics.get("time_to_first_lift_activation", -1.0)) >= 0.0
+		and mining_instance.sensor_twinkle_overlay != null
 	)
 	mining_instance._unhandled_input(developer_event)
 	last_developer_setup_worked = (
@@ -673,6 +1240,7 @@ func generate_starting_planet_signature() -> String:
 		and teleported
 		and upgrade_reassigned
 		and fuel_rates_correct
+		and alpha_systems_worked
 		and mining_instance.get_total_resource_count("Diamond") == 7
 		and not mining_instance.developer_test_panel.is_open()
 	)
@@ -746,3 +1314,22 @@ func tree_has_button_text(root_node: Node, button_text: String) -> bool:
 		if tree_has_button_text(child, button_text):
 			return true
 	return false
+
+
+func tree_has_label_text(root_node: Node, label_text: String) -> bool:
+	if root_node is Label and root_node.text == label_text:
+		return true
+	for child in root_node.get_children():
+		if tree_has_label_text(child, label_text):
+			return true
+	return false
+
+
+func find_label_by_text(root_node: Node, label_text: String) -> Label:
+	if root_node is Label and (root_node as Label).text == label_text:
+		return root_node as Label
+	for child in root_node.get_children():
+		var result := find_label_by_text(child, label_text)
+		if result != null:
+			return result
+	return null

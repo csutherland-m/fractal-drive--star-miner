@@ -14,6 +14,10 @@ const DISPLAY_SIZE := Vector2(DESIGN_SIZE.x * DISPLAY_SCALE.x, DESIGN_SIZE.y * D
 const GAUGE_CENTER := Vector2(418.0, 260.0)
 const BUTTON_Q_RECT := Rect2(127.0, 286.0, 94.0, 98.0)
 const BUTTON_E_RECT := Rect2(577.0, 292.0, 88.0, 92.0)
+const FUEL_WARNING_RATIO := 0.25
+const HEAT_WARNING_RATIO := 0.75
+const WARNING_FLASHES_PER_SECOND := 2.0
+const HUD_FONT_SCALE := 1.25
 
 var design_root: Control
 var fuel_meter: HudSegmentedMeter
@@ -33,12 +37,24 @@ var radial_cooldown_label: Label
 var directional_cooldown_label: Label
 var q_button_overlay: ColorRect
 var e_button_overlay: ColorRect
+var warning_overlay: ColorRect
+var hud_warning_active: bool = false
+var hud_warning_elapsed: float = 0.0
 
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_PASS
 	custom_minimum_size = DISPLAY_SIZE
 	build_hud()
+	set_process(false)
+
+
+func _process(delta: float) -> void:
+	if not hud_warning_active or warning_overlay == null:
+		return
+	hud_warning_elapsed += delta
+	var pulse: float = (sin(hud_warning_elapsed * TAU * WARNING_FLASHES_PER_SECOND) + 1.0) * 0.5
+	warning_overlay.color = Color(1.0, 0.015, 0.0, lerpf(0.08, 0.34, pulse))
 
 
 func build_hud() -> void:
@@ -123,6 +139,14 @@ func build_hud() -> void:
 	radial_cooldown_label = create_cooldown_label(Rect2(105.0, 400.0, 124.0, 26.0))
 	directional_cooldown_label = create_cooldown_label(Rect2(536.0, 400.0, 126.0, 26.0))
 
+	warning_overlay = ColorRect.new()
+	warning_overlay.name = "CriticalWarningOverlay"
+	warning_overlay.position = Vector2.ZERO
+	warning_overlay.size = DESIGN_SIZE
+	warning_overlay.color = Color.TRANSPARENT
+	warning_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	design_root.add_child(warning_overlay)
+
 
 func create_meter(rect: Rect2, color: Color, units_per_tick: float) -> HudSegmentedMeter:
 	var meter: HudSegmentedMeter = SegmentedMeterScript.new()
@@ -135,14 +159,16 @@ func create_meter(rect: Rect2, color: Color, units_per_tick: float) -> HudSegmen
 	return meter
 
 
-func add_window_label(text_value: String, rect: Rect2, color: Color, font_size: int) -> Label:
+func add_window_label(text_value: String, rect: Rect2, _color: Color, font_size: int) -> Label:
 	var label := Label.new()
 	label.text = text_value
 	label.position = rect.position
 	label.size = rect.size
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	label.add_theme_font_size_override("font_size", font_size)
-	label.add_theme_color_override("font_color", color)
+	label.add_theme_font_size_override("font_size", roundi(float(font_size) * HUD_FONT_SCALE))
+	# The instrument windows are nearly black, so white provides the strongest contrast.
+	# Keep the color parameter in the signature for compatibility with existing callers.
+	label.add_theme_color_override("font_color", Color.WHITE)
 	label.add_theme_color_override("font_shadow_color", Color.BLACK)
 	label.add_theme_constant_override("shadow_offset_x", 1)
 	label.add_theme_constant_override("shadow_offset_y", 1)
@@ -242,7 +268,20 @@ func set_shield(current_shield: float, maximum_shield: float, powered: bool) -> 
 func set_engine_levels(current_fuel: float, maximum_fuel: float, new_heat_ratio: float) -> void:
 	var fuel_ratio := clampf(current_fuel / maxf(maximum_fuel, 0.001), 0.0, 1.0)
 	fuel_needle.rotation = lerpf(deg_to_rad(-180.0), deg_to_rad(-90.0), fuel_ratio)
-	heat_needle.rotation = lerpf(deg_to_rad(-90.0), deg_to_rad(0.0), clampf(new_heat_ratio, 0.0, 1.0))
+	var clamped_heat_ratio := clampf(new_heat_ratio, 0.0, 1.0)
+	heat_needle.rotation = lerpf(deg_to_rad(-90.0), deg_to_rad(0.0), clamped_heat_ratio)
+	set_critical_warning(fuel_ratio, clamped_heat_ratio)
+
+
+func set_critical_warning(fuel_ratio: float, current_heat_ratio: float) -> void:
+	var should_flash := fuel_ratio <= FUEL_WARNING_RATIO or current_heat_ratio >= HEAT_WARNING_RATIO
+	if should_flash == hud_warning_active:
+		return
+	hud_warning_active = should_flash
+	hud_warning_elapsed = 0.0
+	set_process(hud_warning_active)
+	if warning_overlay != null:
+		warning_overlay.color = Color(1.0, 0.015, 0.0, 0.21) if hud_warning_active else Color.TRANSPARENT
 
 
 func set_hull(current_hull: float, maximum_hull: float) -> void:

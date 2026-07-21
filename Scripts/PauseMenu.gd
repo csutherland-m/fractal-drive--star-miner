@@ -12,7 +12,10 @@ signal quit_requested
 @onready var save_status_label: Label = $MenuRoot/CenterBox/PausePanel/ButtonBox/SaveStatusLabel
 @onready var settings_panel: Panel = $MenuRoot/CenterBox/SettingsPanel
 @onready var mouse_directed_e_toggle: CheckButton = $MenuRoot/CenterBox/SettingsPanel/SettingsBox/MouseDirectedEToggle
+@onready var menu_back_binding_button: Button = $MenuRoot/CenterBox/SettingsPanel/SettingsBox/MenuBackBindingButton
 @onready var settings_back_button: Button = $MenuRoot/CenterBox/SettingsPanel/SettingsBox/BackButton
+
+var waiting_for_menu_back_key: bool = false
 
 
 func _ready() -> void:
@@ -25,6 +28,7 @@ func _ready() -> void:
 	settings_button.pressed.connect(_on_settings_pressed)
 	quit_button.pressed.connect(_on_quit_pressed)
 	mouse_directed_e_toggle.toggled.connect(_on_mouse_directed_e_toggled)
+	menu_back_binding_button.pressed.connect(_on_menu_back_binding_pressed)
 	settings_back_button.pressed.connect(_on_settings_back_pressed)
 	
 	hide_menu()
@@ -71,6 +75,7 @@ func _on_save_pressed() -> void:
 
 func _on_settings_pressed() -> void:
 	mouse_directed_e_toggle.set_pressed_no_signal(GameSettings.mouse_directed_e_enabled)
+	refresh_menu_back_binding_text()
 	pause_panel.visible = false
 	settings_panel.visible = true
 
@@ -82,6 +87,32 @@ func _on_settings_back_pressed() -> void:
 
 func _on_mouse_directed_e_toggled(enabled: bool) -> void:
 	GameSettings.set_mouse_directed_e_enabled(enabled)
+
+
+func _on_menu_back_binding_pressed() -> void:
+	waiting_for_menu_back_key = true
+	menu_back_binding_button.text = "Press a key for Menu Back..."
+
+
+func _input(event: InputEvent) -> void:
+	if not waiting_for_menu_back_key or not visible:
+		return
+	if event is InputEventKey:
+		var key_event := event as InputEventKey
+		if key_event.pressed and not key_event.echo:
+			var selected_key := (
+				key_event.physical_keycode
+				if key_event.physical_keycode != KEY_NONE
+				else key_event.keycode
+			) as Key
+			GameSettings.set_menu_back_keycode(selected_key)
+			waiting_for_menu_back_key = false
+			refresh_menu_back_binding_text()
+			get_viewport().set_input_as_handled()
+
+
+func refresh_menu_back_binding_text() -> void:
+	menu_back_binding_button.text = "Menu Back Key: %s" % GameSettings.get_menu_back_key_text()
 
 
 func make_pause_panel_transparent() -> void:

@@ -4,6 +4,7 @@ const DEFAULT_SEED_TEXT := "STAR_MINER_DEFAULT_SEED_001"
 const MAX_GALAXY_SYSTEMS := 64
 const FINAL_PATH_DEPTH := 7
 const STARTING_SYSTEM_ID := "outer_00"
+const FIXED_STARTING_PLANET_SEED := 1_704_205_327
 
 enum StartingScenarioState {
 	STARTING_STRANDED,
@@ -36,7 +37,9 @@ func start_new_run(seed_text: String = DEFAULT_SEED_TEXT) -> void:
 	current_run_seed = stable_seed_from_text(run_seed_text)
 	galaxy_seed = derive_seed(current_run_seed, "galaxy")
 	starting_system_seed = derive_seed(current_run_seed, "starting_system")
-	starting_planet_seed = derive_seed(current_run_seed, "starting_planet")
+	# The tutorial planet is deliberately identical in every run so its opening
+	# resources and progression can be balanced without a bad-seed failure.
+	starting_planet_seed = FIXED_STARTING_PLANET_SEED
 	starting_scenario_state = StartingScenarioState.STARTING_STRANDED
 	cargo_hauler_intro_shown = false
 	starship_escape_fuel_tons = 0
@@ -254,12 +257,50 @@ func mark_cargo_hauler_intro_shown() -> void:
 	cargo_hauler_intro_shown = true
 
 
+func get_cargo_hauler_intro_pages() -> Array[String]:
+	return [
+		(
+			"Howdy, greenhorn. Welcome to Quiet Reach.\n\n"
+			+ "I'm the cargo hauler assigned to this patch of nowhere. I'll keep an eye on your operation "
+			+ "and send down equipment when you've proved you know which end of the drill goes in the dirt."
+		),
+		(
+			"You must be new to this whole mining thing, so here's how you handle that rig:\n\n"
+			+ "A / D or Left / Right: drive and drill sideways\n"
+			+ "S or Down: drill downward\n"
+			+ "W, Up, or Space: fire your upward thrusters\n"
+			+ "Left Mouse: fire the mining laser\n"
+			+ "Q: radial explosive blast    E: directional explosive blast\n"
+			+ "F: interact or ride a lift    L: plan a lift after fabrication unlocks\n"
+			+ "I: open miner inventory and dump unwanted cargo one unit at a time\n"
+			+ "R: place a fabricated GPS shaft marker\n"
+			+ "M: open the explored planet map; drag or use arrows to pan, mouse wheel to zoom\n"
+			+ "Esc: close the whole menu or overlay\n"
+			+ "Pause / Break: go back one menu (rebind it in Settings)"
+		),
+		(
+			"Now here's the job, yahoo: you're gonna want to get down there, find some fuel and ore, "
+			+ "and haul it back up to the surface. Use what you bring home to upgrade your gear, fabricate "
+			+ "better parts, and push that shaft deeper.\n\n"
+			+ "Once you get down a bit farther, I'll check back in and show you a few tricks for getting real rich. "
+			+ "For now, keep one eye on your fuel gauge and the other on your cargo hold. A full hold means "
+			+ "it's time to haul your riches home, and an empty fuel tank means game over—stuck down there to die "
+			+ "alone in the depths of an alien world. Don't let a shiny rock talk you into a one-way trip."
+		),
+	]
+
+
 func get_cargo_hauler_intro_text() -> String:
+	# Compatibility helper for callers that still expect one combined message.
+	return "\n\n".join(get_cargo_hauler_intro_pages())
+
+
+func get_cargo_hauler_shallow_scan_text() -> String:
 	return (
-		"You picked a bad place to run dry, friend. This system is quiet, but that will not last forever.\n\n"
-		+ "Mine what you can and process enough rocket fuel to reach the next system. "
-		+ "Stay far away from Demon territory.\n\n"
-		+ "Once you have enough fuel, return to your Starship and choose your route carefully."
+		"Shallow scan coming through, greenhorn. I've tagged your first three copper, iron, and raw-fuel "
+		+ "blocks with pixie dust to get you pointed toward payday.\n\n"
+		+ "There's a richer spread of copper and iron in the first 300 meters, too. Follow the sparkle, "
+		+ "mind your fuel and cargo, and bring the haul back to the surface."
 	)
 
 
@@ -290,7 +331,7 @@ func apply_save_data(data: Dictionary) -> void:
 	current_run_seed = int(data.get("current_run_seed", stable_seed_from_text(run_seed_text)))
 	galaxy_seed = int(data.get("galaxy_seed", derive_seed(current_run_seed, "galaxy")))
 	starting_system_seed = int(data.get("starting_system_seed", derive_seed(current_run_seed, "starting_system")))
-	starting_planet_seed = int(data.get("starting_planet_seed", derive_seed(current_run_seed, "starting_planet")))
+	starting_planet_seed = FIXED_STARTING_PLANET_SEED
 	starting_scenario_state = clampi(
 		int(data.get("starting_scenario_state", StartingScenarioState.STARTING_STRANDED)),
 		StartingScenarioState.STARTING_STRANDED,

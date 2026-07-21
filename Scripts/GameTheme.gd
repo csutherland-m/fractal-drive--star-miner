@@ -24,8 +24,8 @@ static func create_button_theme() -> Theme:
 	)
 	
 	var disabled_style := create_button_style(
-		Color("#566B75"),
-		Color("#3E4F5A"),
+		Color("#455A66"),
+		Color("#A8C4D1"),
 		Color("#101820")
 	)
 	
@@ -37,11 +37,11 @@ static func create_button_theme() -> Theme:
 	game_theme.set_color("font_color", "Button", Color("#102A3A"))
 	game_theme.set_color("font_hover_color", "Button", Color("#071821"))
 	game_theme.set_color("font_pressed_color", "Button", Color("#EAF8FF"))
-	game_theme.set_color("font_disabled_color", "Button", Color("#5E6D73"))
+	game_theme.set_color("font_disabled_color", "Button", Color("#F1FAFD"))
 	game_theme.set_color("font_focus_color", "Button", Color("#102A3A"))
 	
-	game_theme.set_color("font_outline_color", "Button", Color("#DDF7FF"))
-	game_theme.set_constant("outline_size", "Button", 1)
+	game_theme.set_color("font_outline_color", "Button", Color("#05090C"))
+	game_theme.set_constant("outline_size", "Button", 2)
 	
 	game_theme.set_font_size("font_size", "Button", 22)
 	

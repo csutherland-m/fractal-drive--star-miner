@@ -3,7 +3,7 @@ extends Node
 signal save_completed(success: bool, message: String)
 
 const SAVE_VERSION := 1
-const GENERATOR_VERSION := 1
+const GENERATOR_VERSION := 2
 const SAVE_PATH := "user://star_miner_save.json"
 
 var pending_scene_path: String = ""

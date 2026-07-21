@@ -112,7 +112,7 @@ The regression starts two new games, generates both galaxies, both seeded local-
 
 - `A/D` or arrow keys: move.
 - `W`, `Space`, or up arrow: thrust upward like a small rocket.
-- Hold left, right, or down toward a block to mine it. Blocks have hardness/HP, and the drill deals damage over time.
+- Hold left, right, or down toward a block to mine it. Blocks have immutable base durability, and the active drill interaction applies mining power per second. Partial mining progress resets on release/retarget and is never saved per block.
 - `Q` or the HUD button activates Radial Blast, mining all mineable blocks in the 3x3 area centered on the miner. It consumes one loaded explosive charge and has a 5-second cooldown.
 - `E` or the HUD button activates Directional Blast, mining the next three mineable blocks in one cardinal direction. It consumes one loaded explosive charge, has no direct miner-fuel cost, and has a 5-second cooldown.
 - Pause and choose `Settings` to toggle `Mouse-directed E ability`, the first gameplay setting. When enabled, E selects whichever 90-degree direction from the miner is closest to the cursor. When disabled, hold `W/up`, `S/down`, `A/left`, or `D/right` while activating to aim explicitly; otherwise E uses the drill's current facing.
@@ -120,7 +120,7 @@ The regression starts two new games, generates both galaxies, both seeded local-
 - Ore caught by a blast is rolled and deposited directly into miner cargo using normal inventory-capacity rules. Ability pickup lines appear in a small list about 200 px above screen center, using the same amount/resource animation as ordinary mining. No ability name, `BLAST RECOVERY` heading, dirt, or rock text is displayed.
 - Mining emits placeholder dust/sparks and floating pickup text. These are code-driven now; replacement particle textures can be assigned on `MiningEffects.gd` later without changing mining logic.
 - The base miner moves 30 percent faster and mines 50 percent faster than the first prototype tuning.
-- Block hardness increases by 10 percent per row below the surface.
+- Starting-planet durability uses `base_material_durability * (1.0 + 1.2 * clamp(depth / 7500m, 0, 1))`, producing a predictable 1.0x surface to 2.2x core curve.
 - Dirt and rock do not take cargo space.
 - Starting two rows below the surface, dirt has a 2 percent chance to seed a small void pocket. Each pocket rolls 1-4 connected blocks, randomizes its shape from the starting dirt block, and remains hidden by fog of war until revealed.
 - Lode Stone starts appearing at 500m by replacing some normal rock blocks. It starts at a 1 percent conversion chance, scales upward with depth, cannot be mined yet, and is affected by gravity when unsupported. Landing impacts trigger a dust burst and short camera shake.
@@ -144,7 +144,7 @@ The regression starts two new games, generates both galaxies, both seeded local-
 - The player starts with 100 Credits.
 - Raw fuel can be processed in the lander into 200 kg of mining fuel and 1 ton of rocket fuel per block.
 - Fuel processing takes 30 seconds per 1 ton of rocket fuel. The Lander screen shows the remaining processing time.
-- The Lander screen also opens an instant Ammo Fabricator. One Raw Fuel block becomes 10 explosive powder, up to 100 stored powder. One Copper becomes one casing, with lander cargo consumed before miner cargo for both inputs.
+- The first purchased upgrade triggers a Cargo Hauler delivery of the Lander Fabricator. Its alpha recipes produce Copper/Iron/Gold bars, Copper/Iron wire, Basic Circuits, and Explosive Charges. Finished output transfers atomically to cargo or remains in the fabricator with a red `CARGO FULL` warning.
 - One powder plus one casing assembles one explosive charge. The fabricator stores up to 20 finished charges, while the miner initially carries up to 10 for shared use by Q and E. Loaded explosives use the separate ammo store and never consume ore-cargo capacity. Each charge is equivalent to one Copper plus one tenth of a Raw Fuel block.
 - Raw fuel that does not fit in the lander fuel tanks remains in the cargo hold.
 - The starship can store 7000 kg of mining fuel and currently starts with 1000 kg for playtesting.
@@ -204,22 +204,30 @@ The regression starts two new games, generates both galaxies, both seeded local-
 ## Mk 1 Mining Vehicle Upgrades
 
 - The former flat Miner list is now an extensible set of component categories: Drill Assembly, Power Unit, Mobility System, Fuel Cell, Cargo Capacity, Thermal Management, Life Support, Shield Generator, Structural Frame, Capacitor Bank, and Weapon Systems. Each is data-driven and can accept future Mk 2-Mk 10 definitions without rebuilding the upgrade UI or developer panel.
-- Unless noted otherwise, a 10% improvement compounds each level: increases use `base * 1.1^level`, while consumption and delay reductions use `base * 0.9^level`.
+- Mk 1 components use levels 0-5. Unless noted otherwise, increases use `base * 1.2^level`; consumption/delay improvements divide by `1.2^level`. A level-5 drill therefore reaches exactly `2.48832x` base mining power.
 - Drill Yield uses per-ore starting ranges. Copper is 2-9, Iron 2-8, Gold 1-6, Diamond 1-4, Warp Gems 1-3, and Black Hole Crystals 1-2. Odd levels raise the minimum by one and even levels raise the maximum by one, relative to each ore's base.
-- Power Unit output controls electrical generation rather than vehicle speed. Its efficiency reduces all mining-fuel drain associated with keeping the Power Unit active, including idle, driving, and drilling drain. Mobility speed, acceleration/deceleration, and vertical climb are independently upgradeable; every level in any of those three performance lines compounds full-throttle mobility power draw by 6%. Kinetic Efficiency separately compounds that resulting draw downward by 10% per level. With all four Mobility lines at level 5, rounded full-throttle draw is 283 kW, 41.5% above the 200 kW base.
-- Mk 1 Power Output is intentionally capped at level 7: the rounded progression is 600, 660, 726, 799, 879, 967, 1,064, and 1,170 kW. With all other electrical upgrades at level 10 and continuous full-rate shields, movement, and weapons, this creates an approximately 125 kW (9.7%) deficit that the capacitor can cover for roughly 41 seconds.
+- Power Unit output controls electrical generation rather than vehicle speed. Its efficiency reduces all mining-fuel drain associated with keeping the Power Unit active, including idle, driving, and drilling drain. Mobility speed, acceleration/deceleration, and vertical climb are independently upgradeable; every level in those performance lines compounds full-throttle mobility power draw by 6%, while Kinetic Efficiency divides that draw by 1.2 per level.
+- Mk 1 Power Output follows the same level 0-5 cap and 20% curve as other continuously scaling MK1 components.
 - Shield upgrades independently control HP, recharge delay, recharge-rate ceiling, and both maintenance/recharge efficiency. Structural Frame controls hull integrity and flat armor. Armor is calculated once per incoming hull hit after shield absorption, including shield-bypassing fall and boulder damage, and always allows at least 1 hull damage through.
 - Weapon upgrades affect the laser's final floating-point damage, energy cost, fire rate, and critical chance. Critical chance adds 2 percentage points per level; a critical applies 200% after the normal damage modifiers.
-- Life Support Tolerance is intentionally present as a non-functional placeholder for later environment mechanics. Sensor Strength was not in the Mk 1 specification, so it remains available under Retained Miner Upgrades for later review. All existing Lander, Planetary, Starship, and Global upgrades are also retained unchanged.
+- Life Support Tolerance remains a non-functional placeholder. Sensor Strength now has five authored milestones: levels 1/3/5 expand the square visibility radius, while levels 2/4 detect anonymous ore one/two blocks beyond visibility with softly phased pixie-dust twinkles.
+
+## Starting-Planet Alpha Progression
+
+- The tutorial planet uses a fixed seed and generator version, plus small authored shallow Iron and Gold deposits. Other planets retain ordinary seeded generation.
+- Advanced ore access is separate from durability: Diamond requires Drill Level 2, Warp Gems Level 4, and Black Hole Crystals/Planet Core Level 5 during normal drilling and blast targeting.
+- Press `L` underground to preview a lift station. A station requires a three-block-wide solid foundation, one clear vertical shaft block, one Iron per four shaft blocks, one Copper per three shaft blocks, and one Basic Circuit. Costs round up from exact height; confirmation spends resources only after revalidation.
+- Press `F` near a completed lift station or its upper anchor to travel. The anchor selects the highest reachable aligned platform; Core Vault lockdown disables lift construction and travel.
+- Pacing telemetry records first upgrade/Sensor/fabrication/lift/core times, drilling/travel/combat/management time, resource flow, and representative break-time readouts. It is included in mining saves and exposed through `get_developer_progression_metrics()`.
 
 ### Upgrade Replacement Change Log
 
-- `Drill Efficiency`: retained at 10% compounded drill damage per level (description clarified from “faster”).
-- `Cargo Capacity`: retained at 10% compounded capacity per level.
-- `Fuel Tank` (`miner_fuel_tank`): renamed/migrated to Fuel Cell Capacity (`miner_fuel_cell_capacity`); its 10% capacity behavior is unchanged.
-- `Engine Power` (`miner_engine_power`): previously increased speed and acceleration 5% per level; renamed/migrated to Power Unit Output (`miner_power_unit_output`) and now increases electrical generation 10% per level. Mobility upgrades now own movement performance.
-- `Engine Efficiency` (`miner_engine_efficiency`): previously reduced movement/drilling fuel consumption 10% per level; renamed/migrated to Power Unit Efficiency (`miner_power_unit_efficiency`) and now also applies to idle power-production fuel use.
-- `Hull Strength` (`miner_hull_strength`): previously a non-functional placeholder; renamed/migrated to Structural Frame Maximum Integrity (`miner_structural_integrity`) and now increases maximum hull HP 10% per level.
+- `Drill Efficiency`: now compounds mining power by 20% per level.
+- `Cargo Capacity`: now compounds capacity by 20% per level.
+- `Fuel Tank` (`miner_fuel_tank`): renamed/migrated to Fuel Cell Capacity (`miner_fuel_cell_capacity`) and follows the 20% curve.
+- `Engine Power` (`miner_engine_power`): renamed/migrated to Power Unit Output (`miner_power_unit_output`) and now increases electrical generation 20% per level. Mobility upgrades own movement performance.
+- `Engine Efficiency` (`miner_engine_efficiency`): renamed/migrated to Power Unit Efficiency (`miner_power_unit_efficiency`) and divides continuous fuel use by 1.2 per level.
+- `Hull Strength` (`miner_hull_strength`): renamed/migrated to Structural Frame Maximum Integrity (`miner_structural_integrity`) and now increases maximum hull HP 20% per level.
 - Added functional Drill Yield, four Mobility, Thermal Management, Life Support Efficiency, four Shield Generator, Structural Armor, Capacitor Capacity, and four Weapon Systems upgrade lines.
 - Existing saves migrate renamed string IDs when mining state loads. If both an old and new ID are present, the higher level wins. Current hull, shield, capacitor, and fuel values remain valid and gain newly purchased capacity rather than being reset.
 

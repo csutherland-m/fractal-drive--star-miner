@@ -52,7 +52,7 @@ autowrap_mode = 2
 
 [node name="SettingsPanel" type="Panel" parent="MenuRoot/CenterBox"]
 visible = false
-custom_minimum_size = Vector2(700, 390)
+custom_minimum_size = Vector2(760, 520)
 layout_mode = 2
 
 [node name="SettingsBox" type="VBoxContainer" parent="MenuRoot/CenterBox/SettingsPanel"]
@@ -84,8 +84,19 @@ theme_override_font_sizes/font_size = 18
 text = "When enabled, E fires toward the nearest cardinal direction (up, down, left, or right) from the miner to the cursor. When disabled, E uses held input or the drill's current facing."
 autowrap_mode = 2
 
+[node name="MenuBackBindingButton" type="Button" parent="MenuRoot/CenterBox/SettingsPanel/SettingsBox"]
+layout_mode = 2
+text = "Menu Back Key: Pause"
+
+[node name="MenuBackBindingDescription" type="Label" parent="MenuRoot/CenterBox/SettingsPanel/SettingsBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.78, 0.88, 0.93, 1)
+theme_override_font_sizes/font_size = 18
+text = "Pause/Break steps back one screen. Escape always closes the entire menu or overlay. Click this button, then press a new key for Menu Back."
+autowrap_mode = 2
+
 [node name="SettingsSpacer" type="Control" parent="MenuRoot/CenterBox/SettingsPanel/SettingsBox"]
-custom_minimum_size = Vector2(0, 70)
+custom_minimum_size = Vector2(0, 20)
 layout_mode = 2
 size_flags_vertical = 3
 

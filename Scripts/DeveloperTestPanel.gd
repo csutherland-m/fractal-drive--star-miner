@@ -10,6 +10,7 @@ var resource_inputs: Dictionary = {}
 var upgrade_inputs: Dictionary = {}
 var status_label: Label
 var cave_arrow_toggle: CheckButton
+var metrics_label: Label
 var was_paused: bool = false
 
 
@@ -124,6 +125,12 @@ func build_panel() -> void:
 	cave_arrow_toggle.toggled.connect(Callable(self, "set_cave_arrow_enabled"))
 	cave_tools_row.add_child(cave_arrow_toggle)
 
+	metrics_label = Label.new()
+	metrics_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	metrics_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	metrics_label.add_theme_font_size_override("font_size", 13)
+	root_box.add_child(metrics_label)
+
 	status_label = Label.new()
 	status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	status_label.text = "Changes apply to the current test run only."
@@ -195,6 +202,43 @@ func refresh_from_scene() -> void:
 		upgrade_inputs[upgrade_id].value = mining_scene.upgrade_levels.get(upgrade_id, 0)
 	if cave_arrow_toggle != null:
 		cave_arrow_toggle.set_pressed_no_signal(mining_scene.is_developer_cave_arrow_enabled())
+	refresh_metrics()
+
+
+func refresh_metrics() -> void:
+	if metrics_label == null or not mining_scene.has_method("get_developer_progression_metrics"):
+		return
+	var metrics: Dictionary = mining_scene.get_developer_progression_metrics()
+	var current_balance: Dictionary = mining_scene.get_mining_balance_readout(
+		mining_scene.BlockType.DIRT,
+		mining_scene.get_current_depth_meters()
+	)
+	metrics_label.text = (
+		"PACING  elapsed %.1fm | drill %.1fm | travel %.1fm | combat %.1fm | manage %.1fm\n"
+		+ "Milestones: upgrade %s | sensor %s | fabricated %s | lift %s | core %s\n"
+		+ "Current Dirt: base %.3f × depth %.3f = %.3f durability | DPS %.3f | %.3fs break"
+	) % [
+		float(metrics.get("elapsed_seconds", 0.0)) / 60.0,
+		float(metrics.get("active_drilling_seconds", 0.0)) / 60.0,
+		float(metrics.get("travel_seconds", 0.0)) / 60.0,
+		float(metrics.get("combat_seconds", 0.0)) / 60.0,
+		float(metrics.get("management_seconds", 0.0)) / 60.0,
+		format_milestone(metrics.get("time_to_first_upgrade", -1.0)),
+		format_milestone(metrics.get("time_to_sensor_level_1", -1.0)),
+		format_milestone(metrics.get("time_to_first_fabricated_component", -1.0)),
+		format_milestone(metrics.get("time_to_first_lift_activation", -1.0)),
+		format_milestone(metrics.get("time_to_planet_core", -1.0)),
+		float(current_balance.get("base_durability", 0.0)),
+		float(current_balance.get("depth_multiplier", 0.0)),
+		float(current_balance.get("final_durability", 0.0)),
+		float(current_balance.get("drill_dps", 0.0)),
+		float(current_balance.get("estimated_break_seconds", 0.0)),
+	]
+
+
+func format_milestone(value: Variant) -> String:
+	var seconds := float(value)
+	return "--" if seconds < 0.0 else "%.1fm" % (seconds / 60.0)
 
 
 func load_preset(preset: Dictionary) -> void:
