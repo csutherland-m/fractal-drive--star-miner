@@ -11,6 +11,8 @@ const CoreVaultSystemScript := preload("res://Scripts/CoreVaultSystem.gd")
 const StartingPlanetBalance := preload("res://Scripts/StartingPlanetBalance.gd")
 const SensorTwinkleOverlayScript := preload("res://Scripts/SensorTwinkleOverlay.gd")
 const PlanetMapOverlayScript := preload("res://Scripts/PlanetMapOverlay.gd")
+const TutorialOverlayScript := preload("res://Scripts/TutorialOverlay.gd")
+const TutorialContentScript := preload("res://Scripts/TutorialContent.gd")
 const ResourceTileTexture := preload("res://Sprites/TileSets/MiningTilesVariantsDugDirt64.png")
 const LegacyGaugeClusterTexture := preload("res://Sprites/UI/gauge_cluster_concept.png")
 const FuelDepotTexture := preload("res://Sprites/UI/fuel_depot_placeholder.png")
@@ -347,9 +349,6 @@ var game_over_label: Label
 var game_over_actions: VBoxContainer
 var load_last_save_button: Button
 var countdown_label: Label
-var cargo_hauler_dialog: AcceptDialog
-var cargo_hauler_intro_page: int = 0
-var shallow_scan_dialog: AcceptDialog
 var developer_test_panel: Node
 var developer_cave_direction_arrow: Node2D
 var core_vault_system: Node2D
@@ -384,6 +383,12 @@ var planet_generation_rng := RandomNumberGenerator.new()
 var shop_back_callback := Callable()
 var enemy_contact_made: bool = false
 var first_enemy_cave_warning_shown: bool = false
+var tutorial_overlay: TutorialOverlay
+var tutorial_ui_targets: Dictionary = {}
+var tutorial_allowed_action_id: String = ""
+var tutorial_saved_button_states: Dictionary = {}
+var tutorial_dialogue_was_paused: bool = false
+var tutorial_dialogue_active: bool = false
 
 
 func _ready() -> void:
@@ -414,6 +419,7 @@ func _ready() -> void:
 	create_sensor_twinkle_overlay()
 	create_mining_overlays()
 	create_shop_ui()
+	create_tutorial_overlay()
 	create_developer_test_panel()
 	create_game_over_ui()
 	create_hud()
@@ -422,11 +428,9 @@ func _ready() -> void:
 	update_camera()
 	update_hud()
 	var pending_save := SaveManager.consume_pending_scene_state(scene_file_path)
-	if pending_save.is_empty():
-		show_cargo_hauler_intro_if_needed()
-	else:
+	if not pending_save.is_empty():
 		apply_save_data(pending_save)
-		show_cargo_hauler_intro_if_needed()
+	resume_or_start_tutorial.call_deferred()
 
 
 func create_save_data() -> Dictionary:
@@ -683,74 +687,284 @@ func _process(delta: float) -> void:
 	update_fuel_processing(delta)
 	update_market_pressure(delta)
 	try_transfer_fabricator_output()
+	check_care_package_trigger()
 
 
-func show_cargo_hauler_intro_if_needed() -> void:
-	if not SeedManager.should_show_cargo_hauler_intro():
+func create_tutorial_overlay() -> void:
+	tutorial_overlay = TutorialOverlayScript.new()
+	tutorial_overlay.name = "TutorialOverlay"
+	add_child(tutorial_overlay)
+	tutorial_overlay.continue_requested.connect(_on_tutorial_continue_requested)
+	tutorial_overlay.choice_selected.connect(_on_tutorial_choice_selected)
+
+
+func resume_or_start_tutorial() -> void:
+	if tutorial_overlay == null:
 		return
-
-	SeedManager.mark_cargo_hauler_intro_shown()
-	cargo_hauler_intro_page = 0
-	cargo_hauler_dialog = AcceptDialog.new()
-	cargo_hauler_dialog.title = "Incoming Transmission: Cargo Hauler"
-	cargo_hauler_dialog.exclusive = true
-	cargo_hauler_dialog.confirmed.connect(_on_cargo_hauler_intro_confirmed)
-	add_child(cargo_hauler_dialog)
-	show_current_cargo_hauler_intro_page()
-
-
-func show_current_cargo_hauler_intro_page() -> void:
-	if cargo_hauler_dialog == null:
+	if SeedManager.tutorial_state == SeedManager.TUTORIAL_SKIPPED:
+		apply_tutorial_skip_unlocks(false)
 		return
-	var pages := SeedManager.get_cargo_hauler_intro_pages()
-	if cargo_hauler_intro_page < 0 or cargo_hauler_intro_page >= pages.size():
+	if SeedManager.should_start_first_contact():
+		var node_id := SeedManager.tutorial_dialogue_node_id
+		if node_id.is_empty():
+			node_id = "FC_001"
+		show_first_contact_node(node_id)
 		return
-	cargo_hauler_dialog.dialog_text = pages[cargo_hauler_intro_page]
-	match cargo_hauler_intro_page:
-		0:
-			cargo_hauler_dialog.get_ok_button().text = "Show Me the Controls"
-		1:
-			cargo_hauler_dialog.get_ok_button().text = "What's the Job?"
+	if SeedManager.tutorial_state != SeedManager.TUTORIAL_ACTIVE:
+		return
+	match SeedManager.tutorial_step_id:
+		SeedManager.STEP_FIRST_CONTACT:
+			show_first_contact_node(SeedManager.tutorial_dialogue_node_id if not SeedManager.tutorial_dialogue_node_id.is_empty() else "FC_001")
+		SeedManager.STEP_FIRST_MINING_OBJECTIVE:
+			tutorial_overlay.set_objective("Mine enough copper and iron to afford Sensor Suite Level 1.")
+		SeedManager.STEP_CARE_PACKAGE:
+			show_care_package_dialogue()
+		SeedManager.STEP_RETURN_TO_LANDER:
+			tutorial_overlay.set_objective("Return to the Lander so the Local Miner can explain its controls.")
+		SeedManager.STEP_UI_REFUEL, SeedManager.STEP_UI_REPAIR_INFO, SeedManager.STEP_UI_RESOURCES, SeedManager.STEP_UI_SUBSPACE_NET, SeedManager.STEP_UI_LANDER_TAB:
+			# These steps can only be reached from inside the Lander. Reopen that
+			# interface on load so a mid-explainer save resumes exactly where it left off.
+			if not is_shop_open:
+				open_shop()
+			else:
+				show_current_ui_tutorial_step.call_deferred()
+
+
+func show_first_contact_node(node_id: String) -> void:
+	var node := TutorialContentScript.get_first_contact_node(node_id)
+	if node.is_empty():
+		return
+	SeedManager.set_tutorial_dialogue_node(node_id)
+	begin_tutorial_dialogue()
+	tutorial_overlay.show_dialogue(
+		str(node.get("speaker", TutorialContentScript.GUIDE_SPEAKER)),
+		str(node.get("text", "")),
+		str(node.get("continue_text", "Continue")),
+		node.get("choices", [])
+	)
+
+
+func begin_tutorial_dialogue() -> void:
+	if not tutorial_dialogue_active:
+		tutorial_dialogue_was_paused = is_paused
+	tutorial_dialogue_active = true
+	is_paused = true
+	player_velocity = Vector2.ZERO
+	reset_mining_progress()
+
+
+func end_tutorial_dialogue() -> void:
+	tutorial_overlay.clear_interaction()
+	tutorial_dialogue_active = false
+	is_paused = tutorial_dialogue_was_paused or is_shop_open
+
+
+func _on_tutorial_continue_requested() -> void:
+	if SeedManager.tutorial_step_id in [
+		SeedManager.STEP_UI_REPAIR_INFO,
+		SeedManager.STEP_UI_RESOURCES,
+		SeedManager.STEP_UI_SUBSPACE_NET,
+	]:
+		advance_ui_tutorial_step()
+		return
+	if SeedManager.tutorial_step_id == SeedManager.STEP_CARE_PACKAGE:
+		complete_care_package()
+		return
+	var node := TutorialContentScript.get_first_contact_node(SeedManager.tutorial_dialogue_node_id)
+	if node.is_empty():
+		return
+	var next_node := str(node.get("next", ""))
+	if not next_node.is_empty():
+		show_first_contact_node(next_node)
+		save_tutorial_checkpoint()
+		return
+	match str(node.get("terminal_action", "")):
+		"start_guided_tutorial":
+			SeedManager.begin_guided_tutorial()
+			end_tutorial_dialogue()
+			tutorial_overlay.set_objective("Mine enough copper and iron to afford Sensor Suite Level 1.")
+			save_tutorial_checkpoint()
+		"skip_tutorial":
+			apply_tutorial_skip()
+
+
+func _on_tutorial_choice_selected(choice_id: String) -> void:
+	match choice_id:
+		"story_rags_to_riches":
+			SeedManager.set_player_story(SeedManager.STORY_RAGS_TO_RICHES)
+			show_first_contact_node("FC_AA_RESPONSE")
+		"story_prove_daddy_wrong":
+			SeedManager.set_player_story(SeedManager.STORY_PROVE_DADDY_WRONG)
+			show_first_contact_node("FC_DADDY_RESPONSE")
+		"story_lone_miner":
+			SeedManager.set_player_story(SeedManager.STORY_LONE_MINER)
+			show_first_contact_node("FC_LONE_RESPONSE")
+		"accept_tutorial":
+			SeedManager.tutorial_state = SeedManager.TUTORIAL_ACTIVE
+			show_first_contact_node("FC_ACCEPT_1")
+		"decline_tutorial":
+			apply_tutorial_skip()
 		_:
-			cargo_hauler_dialog.get_ok_button().text = "Begin Mining"
-	popup_wrapped_transmission(cargo_hauler_dialog, Vector2i(820, 500))
+			return
+	save_tutorial_checkpoint()
 
 
-func _on_cargo_hauler_intro_confirmed() -> void:
-	cargo_hauler_intro_page += 1
-	if cargo_hauler_intro_page >= SeedManager.get_cargo_hauler_intro_pages().size():
-		var finished_intro_dialog := cargo_hauler_dialog
-		cargo_hauler_dialog = null
-		finished_intro_dialog.tree_exited.connect(
-			func(): show_shallow_scan_transmission.call_deferred(),
-			CONNECT_ONE_SHOT
+func apply_tutorial_skip() -> void:
+	SeedManager.skip_tutorial()
+	apply_tutorial_skip_unlocks(true)
+
+
+func apply_tutorial_skip_unlocks(save_after: bool) -> void:
+	fabricator_unlocked = true
+	fabricator_message_shown = true
+	release_tutorial_ui_gate()
+	if tutorial_overlay != null:
+		tutorial_overlay.clear_interaction()
+		tutorial_overlay.set_objective("")
+	tutorial_dialogue_active = false
+	is_paused = is_shop_open
+	update_shop_ui()
+	if save_after:
+		save_tutorial_checkpoint()
+
+
+func save_tutorial_checkpoint() -> void:
+	SaveManager.save_game(self)
+
+
+func check_care_package_trigger() -> void:
+	if SeedManager.tutorial_state != SeedManager.TUTORIAL_ACTIVE:
+		return
+	if SeedManager.tutorial_step_id != SeedManager.STEP_FIRST_MINING_OBJECTIVE or is_paused or is_shop_open or is_game_over:
+		return
+	var sensor_definition := find_upgrade_definition("miner_sensor_strength")
+	if sensor_definition.is_empty():
+		return
+	var sensor_costs := get_upgrade_costs(sensor_definition, int(upgrade_levels.get("miner_sensor_strength", 0)))
+	if not can_afford_upgrade(sensor_costs):
+		return
+	SeedManager.set_tutorial_step(SeedManager.STEP_CARE_PACKAGE)
+	show_care_package_dialogue()
+	save_tutorial_checkpoint()
+
+
+func show_care_package_dialogue() -> void:
+	begin_tutorial_dialogue()
+	tutorial_overlay.set_objective("")
+	tutorial_overlay.show_dialogue(
+		TutorialContentScript.GUIDE_SPEAKER,
+		TutorialContentScript.CARE_PACKAGE_TEXT,
+		"Return to the Lander"
+	)
+
+
+func complete_care_package() -> void:
+	fabricator_unlocked = true
+	fabricator_message_shown = true
+	SeedManager.set_tutorial_step(SeedManager.STEP_RETURN_TO_LANDER)
+	end_tutorial_dialogue()
+	tutorial_overlay.set_objective("Return to the Lander so the Local Miner can explain its controls.")
+	update_shop_ui()
+	save_tutorial_checkpoint()
+
+
+func register_tutorial_target(action_id: String, control: Control) -> void:
+	if is_instance_valid(control):
+		tutorial_ui_targets[action_id] = control
+
+
+func get_tutorial_target(action_id: String) -> Control:
+	var target: Variant = tutorial_ui_targets.get(action_id)
+	return target as Control if is_instance_valid(target) else null
+
+
+func show_current_ui_tutorial_step() -> void:
+	if not is_shop_open or tutorial_overlay == null:
+		return
+	var step := TutorialContentScript.get_ui_explainer_step(SeedManager.tutorial_step_id)
+	if step.is_empty():
+		return
+	var targets: Array[Control] = []
+	for action_value in step.get("highlight_actions", []):
+		var target := get_tutorial_target(str(action_value))
+		if target != null:
+			targets.append(target)
+	var allowed_action := str(step.get("allowed_action", ""))
+	apply_tutorial_ui_gate(allowed_action)
+	if not allowed_action.is_empty():
+		var allowed_target := get_tutorial_target(allowed_action)
+		if allowed_target == null:
+			return
+		tutorial_overlay.show_action_prompt(
+			str(step.get("speaker", TutorialContentScript.GUIDE_SPEAKER)),
+			str(step.get("text", "")),
+			allowed_target,
+			targets
 		)
-		finished_intro_dialog.queue_free()
+	else:
+		tutorial_overlay.show_dialogue(
+			str(step.get("speaker", TutorialContentScript.GUIDE_SPEAKER)),
+			str(step.get("text", "")),
+			str(step.get("continue_text", "Continue")),
+			[],
+			targets
+		)
+
+
+func apply_tutorial_ui_gate(allowed_action_id: String) -> void:
+	release_tutorial_ui_gate()
+	tutorial_allowed_action_id = allowed_action_id
+	if shop_panel == null:
 		return
-	# AcceptDialog hides itself after confirmation, so reopen it on the next frame.
-	show_current_cargo_hauler_intro_page.call_deferred()
+	var allowed := get_tutorial_target(allowed_action_id)
+	for button in find_buttons_recursive(shop_panel):
+		tutorial_saved_button_states[button] = button.disabled
+		button.disabled = button != allowed
+		button.focus_mode = Control.FOCUS_ALL if button == allowed else Control.FOCUS_NONE
 
 
-func show_shallow_scan_transmission() -> void:
-	if shallow_scan_dialog != null:
+func release_tutorial_ui_gate() -> void:
+	for button_value in tutorial_saved_button_states.keys():
+		if is_instance_valid(button_value):
+			var button := button_value as Button
+			button.disabled = bool(tutorial_saved_button_states[button_value])
+			button.focus_mode = Control.FOCUS_ALL
+	tutorial_saved_button_states.clear()
+	tutorial_allowed_action_id = ""
+
+
+func find_buttons_recursive(node: Node) -> Array[Button]:
+	var result: Array[Button] = []
+	for child in node.get_children():
+		if child is Button:
+			result.append(child as Button)
+		result.append_array(find_buttons_recursive(child))
+	return result
+
+
+func complete_tutorial_action(action_id: String) -> void:
+	if action_id != tutorial_allowed_action_id:
 		return
-	shallow_scan_dialog = AcceptDialog.new()
-	shallow_scan_dialog.title = "Incoming Transmission: Shallow Scan"
-	shallow_scan_dialog.dialog_text = SeedManager.get_cargo_hauler_shallow_scan_text()
-	shallow_scan_dialog.exclusive = true
-	shallow_scan_dialog.get_ok_button().text = "Follow the Pixie Dust"
-	shallow_scan_dialog.confirmed.connect(_on_shallow_scan_confirmed)
-	add_child(shallow_scan_dialog)
-	popup_wrapped_transmission(shallow_scan_dialog, Vector2i(820, 420))
-	if sensor_twinkle_overlay != null:
-		sensor_twinkle_overlay.queue_redraw()
+	advance_ui_tutorial_step()
 
 
-func _on_shallow_scan_confirmed() -> void:
-	if shallow_scan_dialog == null:
+func advance_ui_tutorial_step() -> void:
+	var step := TutorialContentScript.get_ui_explainer_step(SeedManager.tutorial_step_id)
+	if step.is_empty():
 		return
-	shallow_scan_dialog.queue_free()
-	shallow_scan_dialog = null
+	var next_step := str(step.get("next", ""))
+	if next_step == SeedManager.STEP_LANDER_BASICS_COMPLETE:
+		SeedManager.set_tutorial_step(next_step)
+		release_tutorial_ui_gate()
+		tutorial_overlay.clear_interaction()
+		tutorial_overlay.set_objective("")
+		update_shop_ui()
+		save_tutorial_checkpoint()
+		return
+	SeedManager.set_tutorial_step(next_step)
+	release_tutorial_ui_gate()
+	show_current_ui_tutorial_step.call_deferred()
+	save_tutorial_checkpoint()
 
 
 func popup_wrapped_transmission(dialog: AcceptDialog, preferred_size: Vector2i) -> void:
@@ -796,9 +1010,9 @@ func show_fabricator_delivery_message() -> void:
 func show_first_enemy_cave_warning() -> void:
 	if first_enemy_cave_warning_shown:
 		return
-	# Do not stack an exclusive cave warning over the opening or shallow-scan call.
+	# Do not stack an exclusive cave warning over another active transmission.
 	# Proximity is checked continuously, so it will appear once the active call ends.
-	if cargo_hauler_dialog != null or shallow_scan_dialog != null or has_visible_child_window():
+	if has_visible_child_window():
 		return
 	first_enemy_cave_warning_shown = true
 	var dialog := AcceptDialog.new()
@@ -3718,7 +3932,9 @@ func create_shop_ui() -> void:
 	box.add_child(shop_master_tabs)
 	add_shop_button(shop_master_tabs, "Home", Callable(self, "show_shop_main_view"))
 	add_shop_button(shop_master_tabs, "Upgrades", Callable(self, "show_upgrade_category_view"))
-	add_shop_button(shop_master_tabs, "Lander", Callable(self, "show_market_view"))
+	var master_lander_button := add_shop_button(shop_master_tabs, "Lander", Callable(self, "open_lander_tutorial_target"))
+	master_lander_button.name = "MasterLanderTab"
+	register_tutorial_target("navigation.lander", master_lander_button)
 	var master_fabricator_button := add_shop_button(shop_master_tabs, "Fabricator", Callable(self, "show_fabricator_view"))
 	master_fabricator_button.name = "MasterFabricatorTab"
 	for tab in shop_master_tabs.get_children():
@@ -3886,7 +4102,8 @@ func show_shop_main_view() -> void:
 	top_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	shop_content.add_child(top_row)
 	
-	add_shop_button(top_row, "Upgrades", Callable(self, "show_upgrade_category_view"))
+	var upgrades_button := add_shop_button(top_row, "Upgrades", Callable(self, "show_upgrade_category_view"))
+	upgrades_button.disabled = not SeedManager.is_starting_upgrade_interface_unlocked()
 	
 	var fuel_action_column := VBoxContainer.new()
 	fuel_action_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -3895,12 +4112,14 @@ func show_shop_main_view() -> void:
 	
 	refuel_button = add_shop_button(fuel_action_column, get_refuel_button_text(), Callable(self, "_on_refuel_pressed"))
 	repair_hull_button = add_shop_button(fuel_action_column, get_repair_hull_button_text(), Callable(self, "_on_repair_hull_pressed"))
+	register_tutorial_target("lander.refuel", refuel_button)
+	register_tutorial_target("lander.repair", repair_hull_button)
 	return_to_starship_status_label = Label.new()
 	return_to_starship_status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	return_to_starship_status_label.add_theme_font_size_override("font_size", 14)
 	fuel_action_column.add_child(return_to_starship_status_label)
 	return_to_starship_button = add_shop_button(fuel_action_column, "Return to Starship", Callable(self, "_on_return_to_starship_pressed"))
-	add_shop_button(top_row, "Lander", Callable(self, "show_market_view"))
+	add_shop_button(top_row, "Lander", Callable(self, "open_lander_tutorial_target"))
 	
 	var center_box := CenterContainer.new()
 	center_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -3922,6 +4141,9 @@ func show_shop_main_view() -> void:
 
 
 func show_upgrade_category_view() -> void:
+	if not SeedManager.is_starting_upgrade_interface_unlocked():
+		show_shop_main_view()
+		return
 	clear_shop_content()
 	shop_title_label.text = "Upgrades"
 	shop_back_callback = Callable(self, "show_shop_main_view")
@@ -4044,6 +4266,10 @@ func is_upgrade_relevant(definition: Dictionary) -> bool:
 	var upgrade_id := String(definition.get("id", ""))
 	if is_enemy_contact_upgrade(upgrade_id) and not enemy_contact_made:
 		return false
+	# A player who explicitly opts out receives the whole non-combat MK1 tree;
+	# enemy-contact upgrades retain their independent progression gate.
+	if SeedManager.tutorial_state == SeedManager.TUTORIAL_SKIPPED:
+		return true
 	if not has_purchased_any_upgrade():
 		return upgrade_id == "miner_sensor_strength"
 	if int(upgrade_levels.get(upgrade_id, 0)) > 0:
@@ -4081,10 +4307,24 @@ func has_discovered_upgrade_resource(resource_name: String) -> bool:
 	return int(earned.get(resource_name, 0)) > 0 or int(spent.get(resource_name, 0)) > 0
 
 
+func open_lander_tutorial_target() -> void:
+	show_market_view()
+	complete_tutorial_action("navigation.lander")
+
+
 func show_market_view() -> void:
 	clear_shop_content()
 	shop_title_label.text = "Lander"
 	shop_back_callback = Callable(self, "show_shop_main_view")
+
+	var net_worth_label := Label.new()
+	net_worth_label.text = "Estimated Net Worth: %d Credits" % (credits + get_sell_all_quote())
+	net_worth_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	net_worth_label.add_theme_font_size_override("font_size", 24)
+	net_worth_label.add_theme_color_override("font_color", Color("#FFD54A"))
+	net_worth_label.add_theme_color_override("font_outline_color", Color.BLACK)
+	net_worth_label.add_theme_constant_override("outline_size", 4)
+	shop_content.add_child(net_worth_label)
 	
 	var deposit_row := CenterContainer.new()
 	deposit_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -4152,7 +4392,7 @@ func show_market_view() -> void:
 	process_column.add_child(fuel_processing_status_label)
 
 	var fabricator_button := add_shop_button(process_column, "Lander Fabricator", Callable(self, "show_fabricator_view"))
-	fabricator_button.disabled = not fabricator_unlocked
+	fabricator_button.disabled = not fabricator_unlocked or not SeedManager.is_starting_upgrade_interface_unlocked()
 	
 	var treasure_process_button := add_shop_button(
 		process_column,
@@ -4926,9 +5166,31 @@ func open_shop() -> void:
 	show_shop_main_view()
 	update_shop_ui()
 	update_hud()
+	if SeedManager.tutorial_state == SeedManager.TUTORIAL_ACTIVE:
+		if SeedManager.tutorial_step_id == SeedManager.STEP_RETURN_TO_LANDER:
+			SeedManager.set_tutorial_step(SeedManager.STEP_UI_REFUEL)
+			save_tutorial_checkpoint()
+		if SeedManager.tutorial_step_id in [
+			SeedManager.STEP_UI_REFUEL,
+			SeedManager.STEP_UI_REPAIR_INFO,
+			SeedManager.STEP_UI_RESOURCES,
+			SeedManager.STEP_UI_SUBSPACE_NET,
+			SeedManager.STEP_UI_LANDER_TAB,
+		]:
+			show_current_ui_tutorial_step.call_deferred()
 
 
 func close_shop() -> void:
+	if SeedManager.tutorial_state == SeedManager.TUTORIAL_ACTIVE and SeedManager.tutorial_step_id in [
+		SeedManager.STEP_UI_REFUEL,
+		SeedManager.STEP_UI_REPAIR_INFO,
+		SeedManager.STEP_UI_RESOURCES,
+		SeedManager.STEP_UI_SUBSPACE_NET,
+		SeedManager.STEP_UI_LANDER_TAB,
+	]:
+		release_tutorial_ui_gate()
+		tutorial_overlay.clear_interaction()
+		tutorial_overlay.set_objective("Return to the Lander to continue the controls walkthrough.")
 	is_shop_open = false
 	is_shop_reentry_locked = true
 	is_paused = false
@@ -5011,6 +5273,15 @@ func update_shop_ui() -> void:
 		]
 	)
 	update_lander_cargo_hold_list()
+	if SeedManager.tutorial_state == SeedManager.TUTORIAL_ACTIVE and SeedManager.tutorial_step_id in [
+		SeedManager.STEP_UI_REFUEL,
+		SeedManager.STEP_UI_REPAIR_INFO,
+		SeedManager.STEP_UI_RESOURCES,
+		SeedManager.STEP_UI_SUBSPACE_NET,
+		SeedManager.STEP_UI_LANDER_TAB,
+	]:
+		var tutorial_step := TutorialContentScript.get_ui_explainer_step(SeedManager.tutorial_step_id)
+		apply_tutorial_ui_gate(str(tutorial_step.get("allowed_action", "")))
 
 
 func update_shop_master_tabs() -> void:
@@ -5021,7 +5292,9 @@ func update_shop_master_tabs() -> void:
 			continue
 		var button := child as Button
 		if button.name == "MasterFabricatorTab":
-			button.disabled = not fabricator_unlocked
+			button.disabled = not fabricator_unlocked or not SeedManager.is_starting_upgrade_interface_unlocked()
+		elif button.text == "Upgrades":
+			button.disabled = not SeedManager.is_starting_upgrade_interface_unlocked()
 
 
 func update_shop_stat_cards() -> void:
@@ -5565,6 +5838,10 @@ func _on_sell_black_hole_crystals_pressed() -> void:
 
 func _on_refuel_pressed() -> void:
 	var needed_kg := get_mining_fuel_kg_needed_for_full_refuel()
+	if needed_kg <= 0:
+		update_shop_ui()
+		complete_tutorial_action("lander.refuel")
+		return
 	var kg_to_use: int = mini(needed_kg, lander_mining_fuel_kg)
 	
 	if kg_to_use > 0:
@@ -5584,6 +5861,7 @@ func _on_refuel_pressed() -> void:
 	)
 	update_shop_ui()
 	update_hud()
+	complete_tutorial_action("lander.refuel")
 
 
 func get_mining_fuel_kg_needed_for_full_refuel() -> int:
@@ -5770,6 +6048,7 @@ func trigger_death() -> void:
 		game_over_actions.visible = true
 	if load_last_save_button != null:
 		load_last_save_button.disabled = not SaveManager.has_save()
+		load_last_save_button.text = "Load Slot %d" % SaveManager.active_slot
 
 
 func _on_game_over_load_save_pressed() -> void:

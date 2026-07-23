@@ -40,6 +40,41 @@ offset_bottom = 1.0
 
 [node name="ButtonBox" type="VBoxContainer" parent="MenuUI/MenuRoot/CenterContainer" unique_id=1307121678]
 layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="SlotTitle" type="Label" parent="MenuUI/MenuRoot/CenterContainer/ButtonBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 22
+text = "Choose a Save Slot"
+horizontal_alignment = 1
+
+[node name="SlotButtons" type="HBoxContainer" parent="MenuUI/MenuRoot/CenterContainer/ButtonBox"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="Slot1Button" type="Button" parent="MenuUI/MenuRoot/CenterContainer/ButtonBox/SlotButtons"]
+custom_minimum_size = Vector2(150, 62)
+layout_mode = 2
+text = "Slot 1"
+
+[node name="Slot2Button" type="Button" parent="MenuUI/MenuRoot/CenterContainer/ButtonBox/SlotButtons"]
+custom_minimum_size = Vector2(150, 62)
+layout_mode = 2
+text = "Slot 2"
+
+[node name="Slot3Button" type="Button" parent="MenuUI/MenuRoot/CenterContainer/ButtonBox/SlotButtons"]
+custom_minimum_size = Vector2(150, 62)
+layout_mode = 2
+text = "Slot 3"
+
+[node name="SlotDetailsLabel" type="Label" parent="MenuUI/MenuRoot/CenterContainer/ButtonBox"]
+custom_minimum_size = Vector2(466, 54)
+layout_mode = 2
+theme_override_colors/font_color = Color(0.9, 0.95, 1, 1)
+theme_override_font_sizes/font_size = 15
+horizontal_alignment = 1
+vertical_alignment = 1
+autowrap_mode = 2
 
 [node name="PlayButton" type="Button" parent="MenuUI/MenuRoot/CenterContainer/ButtonBox" unique_id=357024656]
 custom_minimum_size = Vector2(300, 75)
@@ -57,9 +92,14 @@ layout_mode = 2
 text = "Quit"
 
 [node name="SaveStatusLabel" type="Label" parent="MenuUI/MenuRoot/CenterContainer/ButtonBox"]
-custom_minimum_size = Vector2(300, 34)
+custom_minimum_size = Vector2(466, 34)
 layout_mode = 2
 theme_override_colors/font_color = Color(1, 0.38, 0.3, 1)
 theme_override_font_sizes/font_size = 14
 horizontal_alignment = 1
 autowrap_mode = 2
+
+[node name="RestartConfirmation" type="ConfirmationDialog" parent="MenuUI"]
+title = "Restart Save Slot?"
+dialog_text = "This will erase the selected slot and begin a new game."
+ok_button_text = "Erase and Start"

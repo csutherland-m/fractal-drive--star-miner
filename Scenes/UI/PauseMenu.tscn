@@ -17,7 +17,7 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 
 [node name="PausePanel" type="Panel" parent="MenuRoot/CenterBox" unique_id=979466960]
-custom_minimum_size = Vector2(340, 330)
+custom_minimum_size = Vector2(390, 470)
 layout_mode = 2
 
 [node name="ButtonBox" type="VBoxContainer" parent="MenuRoot/CenterBox/PausePanel" unique_id=1721220212]
@@ -29,6 +29,30 @@ anchor_bottom = 1.0
 [node name="ResumeButton" type="Button" parent="MenuRoot/CenterBox/PausePanel/ButtonBox" unique_id=697766186]
 layout_mode = 2
 text = "Resume"
+
+[node name="SaveSlotLabel" type="Label" parent="MenuRoot/CenterBox/PausePanel/ButtonBox"]
+layout_mode = 2
+text = "Save Destination"
+horizontal_alignment = 1
+
+[node name="SaveSlotButtons" type="HBoxContainer" parent="MenuRoot/CenterBox/PausePanel/ButtonBox"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="Slot1Button" type="Button" parent="MenuRoot/CenterBox/PausePanel/ButtonBox/SaveSlotButtons"]
+custom_minimum_size = Vector2(108, 46)
+layout_mode = 2
+text = "Slot 1"
+
+[node name="Slot2Button" type="Button" parent="MenuRoot/CenterBox/PausePanel/ButtonBox/SaveSlotButtons"]
+custom_minimum_size = Vector2(108, 46)
+layout_mode = 2
+text = "Slot 2"
+
+[node name="Slot3Button" type="Button" parent="MenuRoot/CenterBox/PausePanel/ButtonBox/SaveSlotButtons"]
+custom_minimum_size = Vector2(108, 46)
+layout_mode = 2
+text = "Slot 3"
 
 [node name="SaveButton" type="Button" parent="MenuRoot/CenterBox/PausePanel/ButtonBox"]
 layout_mode = 2
@@ -49,6 +73,11 @@ theme_override_font_sizes/font_size = 14
 horizontal_alignment = 1
 vertical_alignment = 1
 autowrap_mode = 2
+
+[node name="OverwriteConfirmation" type="ConfirmationDialog" parent="."]
+title = "Overwrite Save Slot?"
+dialog_text = "This slot already contains another game."
+ok_button_text = "Overwrite"
 
 [node name="SettingsPanel" type="Panel" parent="MenuRoot/CenterBox"]
 visible = false

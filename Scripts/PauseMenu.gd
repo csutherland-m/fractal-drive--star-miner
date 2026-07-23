@@ -14,8 +14,15 @@ signal quit_requested
 @onready var mouse_directed_e_toggle: CheckButton = $MenuRoot/CenterBox/SettingsPanel/SettingsBox/MouseDirectedEToggle
 @onready var menu_back_binding_button: Button = $MenuRoot/CenterBox/SettingsPanel/SettingsBox/MenuBackBindingButton
 @onready var settings_back_button: Button = $MenuRoot/CenterBox/SettingsPanel/SettingsBox/BackButton
+@onready var save_slot_buttons: Array[Button] = [
+	$MenuRoot/CenterBox/PausePanel/ButtonBox/SaveSlotButtons/Slot1Button,
+	$MenuRoot/CenterBox/PausePanel/ButtonBox/SaveSlotButtons/Slot2Button,
+	$MenuRoot/CenterBox/PausePanel/ButtonBox/SaveSlotButtons/Slot3Button,
+]
+@onready var overwrite_confirmation: ConfirmationDialog = $OverwriteConfirmation
 
 var waiting_for_menu_back_key: bool = false
+var selected_save_slot: int = 1
 
 
 func _ready() -> void:
@@ -30,6 +37,11 @@ func _ready() -> void:
 	mouse_directed_e_toggle.toggled.connect(_on_mouse_directed_e_toggled)
 	menu_back_binding_button.pressed.connect(_on_menu_back_binding_pressed)
 	settings_back_button.pressed.connect(_on_settings_back_pressed)
+	overwrite_confirmation.confirmed.connect(_save_to_selected_slot)
+	for index in save_slot_buttons.size():
+		var button := save_slot_buttons[index]
+		button.toggle_mode = true
+		button.pressed.connect(_on_save_slot_selected.bind(index + 1))
 	
 	hide_menu()
 
@@ -38,6 +50,8 @@ func show_menu() -> void:
 	visible = true
 	pause_panel.visible = true
 	settings_panel.visible = false
+	selected_save_slot = SaveManager.active_slot
+	refresh_save_slot_controls()
 
 
 func hide_menu() -> void:
@@ -64,13 +78,40 @@ func _on_quit_pressed() -> void:
 
 
 func _on_save_pressed() -> void:
+	if SaveManager.has_save(selected_save_slot) and selected_save_slot != SaveManager.active_slot:
+		overwrite_confirmation.dialog_text = (
+			"Slot %d contains another saved game. Replace it with the current run?"
+			% selected_save_slot
+		)
+		overwrite_confirmation.popup_centered(Vector2i(520, 210))
+		return
+	_save_to_selected_slot()
+
+
+func _save_to_selected_slot() -> void:
 	var current_scene := get_tree().current_scene
-	var success := SaveManager.save_game(current_scene)
+	var success := SaveManager.save_game(current_scene, selected_save_slot)
 	save_status_label.text = SaveManager.last_status_message
 	save_status_label.add_theme_color_override(
 		"font_color",
 		Color(0.45, 1.0, 0.62, 1.0) if success else Color(1.0, 0.38, 0.3, 1.0)
 	)
+	refresh_save_slot_controls()
+
+
+func _on_save_slot_selected(slot: int) -> void:
+	selected_save_slot = slot
+	refresh_save_slot_controls()
+
+
+func refresh_save_slot_controls() -> void:
+	for index in save_slot_buttons.size():
+		var slot := index + 1
+		var occupied := SaveManager.has_save(slot)
+		var button := save_slot_buttons[index]
+		button.set_pressed_no_signal(slot == selected_save_slot)
+		button.text = "%d\n%s" % [slot, "Saved" if occupied else "Empty"]
+	save_button.text = "Save Game to Slot %d" % selected_save_slot
 
 
 func _on_settings_pressed() -> void:

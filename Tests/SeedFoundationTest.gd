@@ -59,6 +59,23 @@ func run_seed_foundation_tests() -> void:
 	var second_system_signature := await generate_starting_system_signature()
 
 	var failures: Array[String] = []
+	check(save_manager.SLOT_COUNT == 3, "Save manager does not expose three playtest slots.", failures)
+	check(
+		save_manager.get_save_path(1) != save_manager.get_save_path(2)
+		and save_manager.get_save_path(2) != save_manager.get_save_path(3),
+		"Save slots do not use independent files.",
+		failures
+	)
+	var main_menu_scene := load("res://Scenes/main_game_menu.tscn") as PackedScene
+	var main_menu_instance := main_menu_scene.instantiate()
+	root.add_child(main_menu_instance)
+	check(
+		main_menu_instance.slot_buttons.size() == 3
+		and main_menu_instance.continue_button.text.contains("Slot"),
+		"Main menu does not expose selectable three-slot New Game and Continue controls.",
+		failures
+	)
+	main_menu_instance.queue_free()
 	check(first_seeds == second_seeds, "Default run seeds changed between new games.", failures)
 	check(first_galaxy_snapshot == second_galaxy_snapshot, "Galaxy graph changed between new games.", failures)
 	check(first_planet_signature == second_planet_signature, "Starting planet layout changed between new games.", failures)
@@ -93,30 +110,45 @@ func run_seed_foundation_tests() -> void:
 
 	seed_manager.start_new_run()
 	check(seed_manager.starship_escape_fuel_tons == 0, "Starting Starship escape fuel was not zero.", failures)
-	check(seed_manager.should_show_cargo_hauler_intro(), "Cargo hauler intro was not available at run start.", failures)
-	var intro_pages: Array[String] = seed_manager.get_cargo_hauler_intro_pages()
-	check(intro_pages.size() == 3, "Cargo Hauler onboarding does not contain three tutorial pages.", failures)
-	check(intro_pages[0].contains("Welcome to Quiet Reach"), "Cargo Hauler welcome page is missing.", failures)
-	check(intro_pages[1].contains("A / D") and intro_pages[1].contains("Left Mouse"), "Cargo Hauler controls page is incomplete.", failures)
+	check(seed_manager.should_start_first_contact(), "First Contact was not available at run start.", failures)
+	var first_contact_opening: Dictionary = TutorialContent.get_first_contact_node("FC_001")
+	var story_choice: Dictionary = TutorialContent.get_first_contact_node("FC_CHOICE_STORY")
 	check(
-		intro_pages[2].contains("fuel and ore")
-		and intro_pages[2].contains("getting real rich")
-		and intro_pages[2].contains("fuel gauge")
-		and intro_pages[2].contains("cargo hold")
-		and intro_pages[2].contains("game over"),
-		"Cargo Hauler gameplay-loop page is incomplete.",
+		str(first_contact_opening.get("text", "")).contains("bullfrog")
+		and story_choice.get("choices", []).size() == 3,
+		"First Contact dialogue or story choices are incomplete.",
 		failures
 	)
-	var shallow_scan_text: String = seed_manager.get_cargo_hauler_shallow_scan_text()
+	seed_manager.set_player_story(SeedManagerScript.STORY_RAGS_TO_RICHES)
+	seed_manager.begin_guided_tutorial()
 	check(
-		shallow_scan_text.contains("first three copper, iron, and raw-fuel")
-		and shallow_scan_text.contains("first 300 meters")
-		and shallow_scan_text.contains("pixie dust"),
-		"Cargo Hauler shallow-scan transmission is incomplete.",
+		seed_manager.tutorial_state == SeedManagerScript.TUTORIAL_ACTIVE
+		and seed_manager.tutorial_step_id == SeedManagerScript.STEP_FIRST_MINING_OBJECTIVE,
+		"Accepting First Contact did not begin the guided mining objective.",
 		failures
 	)
-	seed_manager.mark_cargo_hauler_intro_shown()
-	check(not seed_manager.should_show_cargo_hauler_intro(), "Cargo hauler intro was not limited to one display.", failures)
+	seed_manager.skip_tutorial()
+	seed_manager.skip_tutorial()
+	check(
+		seed_manager.tutorial_state == SeedManagerScript.TUTORIAL_SKIPPED
+		and seed_manager.is_starting_upgrade_interface_unlocked(),
+		"Tutorial skip was not idempotent or did not unlock the starting interface.",
+		failures
+	)
+	var migrated_tutorial_save: Dictionary = save_manager.migrate_save_data({
+		"save_version": 1,
+		"generator_version": SaveManagerScript.GENERATOR_VERSION,
+		"run_state": {},
+		"scene_state": {},
+	})
+	check(
+		int(migrated_tutorial_save.get("save_version", 0)) == SaveManagerScript.SAVE_VERSION
+		and str(migrated_tutorial_save.get("run_state", {}).get("tutorial_state", ""))
+			== SeedManagerScript.TUTORIAL_SKIPPED,
+		"Pre-tutorial saves were not safely migrated without replaying First Contact.",
+		failures
+	)
+	seed_manager.start_new_run()
 	seed_manager.enter_starting_planet()
 	seed_manager.update_starting_escape_fuel(20, 20)
 	check(
@@ -156,40 +188,84 @@ func generate_starting_planet_signature() -> String:
 	var mining_scene := load("res://Scenes/AsteroidMining.tscn") as PackedScene
 	var mining_instance := mining_scene.instantiate()
 	root.add_child(mining_instance)
+	await process_frame
 	var onboarding_dialog_worked: bool = (
-		mining_instance.cargo_hauler_dialog != null
-		and mining_instance.cargo_hauler_dialog.dialog_text.contains("Welcome to Quiet Reach")
-		and mining_instance.cargo_hauler_dialog.get_ok_button().text == "Show Me the Controls"
-		and mining_instance.cargo_hauler_dialog.get_label().autowrap_mode
+		mining_instance.tutorial_overlay != null
+		and mining_instance.tutorial_overlay.dialogue_panel.visible
+		and mining_instance.tutorial_overlay.dialogue_label.text.contains("bullfrog")
+		and mining_instance.tutorial_overlay.dialogue_label.autowrap_mode
 			== TextServer.AUTOWRAP_WORD_SMART
 	)
-	mining_instance._on_cargo_hauler_intro_confirmed()
-	await process_frame
+	mining_instance._on_tutorial_continue_requested()
+	mining_instance._on_tutorial_continue_requested()
+	onboarding_dialog_worked = onboarding_dialog_worked and mining_instance.tutorial_overlay.choice_box.get_child_count() == 3
+	mining_instance._on_tutorial_choice_selected("story_rags_to_riches")
+	mining_instance._on_tutorial_continue_requested()
+	mining_instance._on_tutorial_choice_selected("accept_tutorial")
+	mining_instance._on_tutorial_continue_requested()
+	mining_instance._on_tutorial_continue_requested()
 	onboarding_dialog_worked = (
 		onboarding_dialog_worked
-		and mining_instance.cargo_hauler_dialog.dialog_text.contains("A / D")
-		and mining_instance.cargo_hauler_dialog.get_ok_button().text == "What's the Job?"
+		and seed_manager.player_story_id == SeedManagerScript.STORY_RAGS_TO_RICHES
+		and seed_manager.tutorial_state == SeedManagerScript.TUTORIAL_ACTIVE
+		and seed_manager.tutorial_step_id == SeedManagerScript.STEP_FIRST_MINING_OBJECTIVE
+		and not mining_instance.is_paused
 	)
-	mining_instance._on_cargo_hauler_intro_confirmed()
-	await process_frame
+	mining_instance.resources["Copper"] = 100
+	mining_instance.resources["Iron"] = 100
+	mining_instance.check_care_package_trigger()
+	onboarding_dialog_worked = onboarding_dialog_worked and seed_manager.tutorial_step_id == SeedManagerScript.STEP_CARE_PACKAGE
+	mining_instance._on_tutorial_continue_requested()
 	onboarding_dialog_worked = (
 		onboarding_dialog_worked
-		and mining_instance.cargo_hauler_dialog.dialog_text.contains("getting real rich")
-		and mining_instance.cargo_hauler_dialog.get_ok_button().text == "Begin Mining"
+		and mining_instance.fabricator_unlocked
+		and seed_manager.tutorial_step_id == SeedManagerScript.STEP_RETURN_TO_LANDER
+		and not mining_instance.is_paused
 	)
-	mining_instance._on_cargo_hauler_intro_confirmed()
-	await process_frame
-	await process_frame
+	mining_instance.open_shop()
+	mining_instance.show_current_ui_tutorial_step()
 	onboarding_dialog_worked = (
 		onboarding_dialog_worked
-		and mining_instance.cargo_hauler_dialog == null
-		and mining_instance.shallow_scan_dialog != null
-		and mining_instance.shallow_scan_dialog.dialog_text.contains("pixie dust")
-		and mining_instance.shallow_scan_dialog.get_ok_button().text == "Follow the Pixie Dust"
-		and mining_instance.shallow_scan_dialog.get_label().autowrap_mode
-			== TextServer.AUTOWRAP_WORD_SMART
+		and seed_manager.tutorial_step_id == SeedManagerScript.STEP_UI_REFUEL
+		and not mining_instance.refuel_button.disabled
+		and mining_instance.repair_hull_button.disabled
 	)
-	mining_instance._on_shallow_scan_confirmed()
+	mining_instance._on_refuel_pressed()
+	mining_instance.show_current_ui_tutorial_step()
+	mining_instance._on_tutorial_continue_requested()
+	mining_instance.show_current_ui_tutorial_step()
+	mining_instance._on_tutorial_continue_requested()
+	mining_instance.show_current_ui_tutorial_step()
+	mining_instance._on_tutorial_continue_requested()
+	mining_instance.show_current_ui_tutorial_step()
+	onboarding_dialog_worked = (
+		onboarding_dialog_worked
+		and seed_manager.tutorial_step_id == SeedManagerScript.STEP_UI_LANDER_TAB
+		and mining_instance.get_tutorial_target("navigation.lander") != null
+	)
+	mining_instance.open_lander_tutorial_target()
+	onboarding_dialog_worked = (
+		onboarding_dialog_worked
+		and seed_manager.tutorial_state == SeedManagerScript.TUTORIAL_ACTIVE
+		and seed_manager.tutorial_step_id == SeedManagerScript.STEP_LANDER_BASICS_COMPLETE
+		and mining_instance.tutorial_allowed_action_id.is_empty()
+	)
+	mining_instance.apply_tutorial_skip()
+	mining_instance.apply_tutorial_skip()
+	onboarding_dialog_worked = (
+		onboarding_dialog_worked
+		and not mining_instance.tutorial_overlay.dialogue_panel.visible
+		and mining_instance.fabricator_unlocked
+		and seed_manager.tutorial_state == SeedManagerScript.TUTORIAL_SKIPPED
+		and mining_instance.is_upgrade_relevant(mining_instance.find_upgrade_definition("miner_drill_efficiency"))
+		and not mining_instance.is_upgrade_relevant(mining_instance.find_upgrade_definition("miner_weapon_damage"))
+	)
+	# Continue the broader balance suite in the guided endpoint state so its
+	# relevance checks still exercise progressive disclosure rather than skip mode.
+	seed_manager.tutorial_state = SeedManagerScript.TUTORIAL_ACTIVE
+	seed_manager.tutorial_step_id = SeedManagerScript.STEP_LANDER_BASICS_COMPLETE
+	mining_instance.close_shop()
+	mining_instance.resources.clear()
 	mining_instance.generate_rows_until(TEST_ROW_COUNT)
 	var signature: String = mining_instance.get_generated_planet_layout_signature(TEST_ROW_COUNT)
 	mining_instance.generate_rows_until(
@@ -1078,7 +1154,7 @@ func generate_starting_planet_signature() -> String:
 		mining_instance.is_game_over
 		and mining_instance.is_paused
 		and mining_instance.game_over_actions.visible
-		and tree_has_button_text(mining_instance.game_over_actions, "Load Last Save")
+		and tree_has_button_text(mining_instance.game_over_actions, "Load Slot %d" % save_manager.active_slot)
 		and tree_has_button_text(mining_instance.game_over_actions, "New Game")
 		and tree_has_button_text(mining_instance.game_over_actions, "Quit")
 	)

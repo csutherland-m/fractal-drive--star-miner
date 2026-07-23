@@ -5,6 +5,25 @@ const MAX_GALAXY_SYSTEMS := 64
 const FINAL_PATH_DEPTH := 7
 const STARTING_SYSTEM_ID := "outer_00"
 const FIXED_STARTING_PLANET_SEED := 1_704_205_327
+const TUTORIAL_SCHEMA_VERSION := 1
+const STORY_UNSELECTED := "unselected"
+const STORY_RAGS_TO_RICHES := "rags_to_riches"
+const STORY_PROVE_DADDY_WRONG := "prove_daddy_wrong"
+const STORY_LONE_MINER := "lone_miner"
+const TUTORIAL_NOT_STARTED := "not_started"
+const TUTORIAL_ACTIVE := "active"
+const TUTORIAL_SKIPPED := "skipped"
+const TUTORIAL_COMPLETED := "completed"
+const STEP_FIRST_CONTACT := "first_contact"
+const STEP_FIRST_MINING_OBJECTIVE := "first_mining_objective"
+const STEP_CARE_PACKAGE := "care_package"
+const STEP_RETURN_TO_LANDER := "return_to_lander"
+const STEP_UI_REFUEL := "ui_refuel"
+const STEP_UI_REPAIR_INFO := "ui_repair_info"
+const STEP_UI_RESOURCES := "ui_resources"
+const STEP_UI_SUBSPACE_NET := "ui_subspace_net"
+const STEP_UI_LANDER_TAB := "ui_lander_tab"
+const STEP_LANDER_BASICS_COMPLETE := "lander_basics_complete"
 
 enum StartingScenarioState {
 	STARTING_STRANDED,
@@ -26,6 +45,12 @@ var galaxy_systems: Array[Dictionary] = []
 var galaxy_systems_by_id: Dictionary = {}
 var selected_system_path: Array[String] = []
 var current_system_id: String = STARTING_SYSTEM_ID
+var tutorial_schema_version: int = TUTORIAL_SCHEMA_VERSION
+var player_story_id: String = STORY_UNSELECTED
+var tutorial_state: String = TUTORIAL_NOT_STARTED
+var tutorial_step_id: String = STEP_FIRST_CONTACT
+var tutorial_dialogue_node_id: String = "FC_001"
+var completed_tutorial_step_ids: Array[String] = []
 
 
 func _ready() -> void:
@@ -45,6 +70,12 @@ func start_new_run(seed_text: String = DEFAULT_SEED_TEXT) -> void:
 	starship_escape_fuel_tons = 0
 	current_system_id = STARTING_SYSTEM_ID
 	selected_system_path = [STARTING_SYSTEM_ID]
+	tutorial_schema_version = TUTORIAL_SCHEMA_VERSION
+	player_story_id = STORY_UNSELECTED
+	tutorial_state = TUTORIAL_NOT_STARTED
+	tutorial_step_id = STEP_FIRST_CONTACT
+	tutorial_dialogue_node_id = "FC_001"
+	completed_tutorial_step_ids.clear()
 	generate_galaxy_structure()
 
 
@@ -257,6 +288,58 @@ func mark_cargo_hauler_intro_shown() -> void:
 	cargo_hauler_intro_shown = true
 
 
+func set_player_story(story_id: String) -> void:
+	if story_id in [STORY_RAGS_TO_RICHES, STORY_PROVE_DADDY_WRONG, STORY_LONE_MINER]:
+		player_story_id = story_id
+
+
+func set_tutorial_dialogue_node(node_id: String) -> void:
+	tutorial_dialogue_node_id = node_id
+
+
+func set_tutorial_step(step_id: String, mark_previous_complete: bool = true) -> void:
+	if mark_previous_complete and not tutorial_step_id.is_empty() and not completed_tutorial_step_ids.has(tutorial_step_id):
+		completed_tutorial_step_ids.append(tutorial_step_id)
+	tutorial_step_id = step_id
+	tutorial_dialogue_node_id = ""
+
+
+func begin_guided_tutorial() -> void:
+	tutorial_state = TUTORIAL_ACTIVE
+	set_tutorial_step(STEP_FIRST_MINING_OBJECTIVE)
+	cargo_hauler_intro_shown = true
+
+
+func skip_tutorial() -> void:
+	if tutorial_state == TUTORIAL_SKIPPED:
+		return
+	if not tutorial_step_id.is_empty() and not completed_tutorial_step_ids.has(tutorial_step_id):
+		completed_tutorial_step_ids.append(tutorial_step_id)
+	tutorial_state = TUTORIAL_SKIPPED
+	tutorial_step_id = ""
+	tutorial_dialogue_node_id = ""
+	cargo_hauler_intro_shown = true
+
+
+func is_tutorial_parked_or_finished() -> bool:
+	return (
+		tutorial_state in [TUTORIAL_SKIPPED, TUTORIAL_COMPLETED]
+		or tutorial_step_id == STEP_LANDER_BASICS_COMPLETE
+	)
+
+
+func is_starting_upgrade_interface_unlocked() -> bool:
+	return is_tutorial_parked_or_finished()
+
+
+func should_start_first_contact() -> bool:
+	return (
+		is_starting_scenario_active()
+		and tutorial_state == TUTORIAL_NOT_STARTED
+		and tutorial_step_id == STEP_FIRST_CONTACT
+	)
+
+
 func get_cargo_hauler_intro_pages() -> Array[String]:
 	return [
 		(
@@ -321,6 +404,12 @@ func create_save_data() -> Dictionary:
 		"galaxy_systems": galaxy_systems.duplicate(true),
 		"selected_system_path": selected_system_path.duplicate(),
 		"current_system_id": current_system_id,
+		"tutorial_schema_version": tutorial_schema_version,
+		"player_story_id": player_story_id,
+		"tutorial_state": tutorial_state,
+		"tutorial_step_id": tutorial_step_id,
+		"tutorial_dialogue_node_id": tutorial_dialogue_node_id,
+		"completed_tutorial_step_ids": completed_tutorial_step_ids.duplicate(),
 	}
 
 
@@ -355,3 +444,25 @@ func apply_save_data(data: Dictionary) -> void:
 	if selected_system_path.is_empty():
 		selected_system_path.append(STARTING_SYSTEM_ID)
 	current_system_id = str(data.get("current_system_id", selected_system_path[-1]))
+	if data.has("tutorial_schema_version"):
+		tutorial_schema_version = int(data.get("tutorial_schema_version", TUTORIAL_SCHEMA_VERSION))
+		player_story_id = str(data.get("player_story_id", STORY_UNSELECTED))
+		tutorial_state = str(data.get("tutorial_state", TUTORIAL_NOT_STARTED))
+		if not tutorial_state in [TUTORIAL_NOT_STARTED, TUTORIAL_ACTIVE, TUTORIAL_SKIPPED, TUTORIAL_COMPLETED]:
+			tutorial_state = TUTORIAL_SKIPPED
+		tutorial_step_id = str(data.get("tutorial_step_id", ""))
+		tutorial_dialogue_node_id = str(data.get("tutorial_dialogue_node_id", ""))
+		completed_tutorial_step_ids.clear()
+		for step_id in data.get("completed_tutorial_step_ids", []):
+			var saved_step_id := str(step_id)
+			if not completed_tutorial_step_ids.has(saved_step_id):
+				completed_tutorial_step_ids.append(saved_step_id)
+	else:
+		# Existing playtest saves predate this tutorial. Preserve their progression
+		# and never force the new opening or its UI locks on top of an active run.
+		tutorial_schema_version = TUTORIAL_SCHEMA_VERSION
+		player_story_id = STORY_UNSELECTED
+		tutorial_state = TUTORIAL_SKIPPED
+		tutorial_step_id = ""
+		tutorial_dialogue_node_id = ""
+		completed_tutorial_step_ids.clear()
