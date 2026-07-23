@@ -73,10 +73,3 @@ func remove_bolt_at(index: int) -> void:
 	bolts.remove_at(index)
 	if is_instance_valid(bolt):
 		bolt.queue_free()
-
-
-func clear_projectiles() -> void:
-	for bolt in bolts:
-		if is_instance_valid(bolt):
-			bolt.queue_free()
-	bolts.clear()

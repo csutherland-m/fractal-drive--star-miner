@@ -14,8 +14,12 @@ var maximum_value: float = 1.0
 
 
 func set_values(new_current: float, new_maximum: float) -> void:
-	current_value = maxf(new_current, 0.0)
-	maximum_value = maxf(new_maximum, 0.001)
+	var clamped_current := maxf(new_current, 0.0)
+	var clamped_maximum := maxf(new_maximum, 0.001)
+	if is_equal_approx(current_value, clamped_current) and is_equal_approx(maximum_value, clamped_maximum):
+		return
+	current_value = clamped_current
+	maximum_value = clamped_maximum
 	queue_redraw()
 
 

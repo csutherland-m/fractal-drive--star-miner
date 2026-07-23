@@ -564,7 +564,6 @@ func update_galaxy_foundation_status() -> void:
 		"Galaxy route foundation unlocked. Available next systems: %s. "
 		+ "Route-selection UI is the next phase."
 	) % ", ".join(next_names)
-	SeedManager.print_available_next_systems()
 
 
 func create_combat_panel(ui_layer: CanvasLayer) -> void:
@@ -840,17 +839,6 @@ func open_combat_with_surprise_enemy() -> void:
 	}
 	active_enemy_index = -1
 	open_combat_panel("Surprise Encounter")
-
-
-func open_combat_with_enemy(enemy_index: int) -> void:
-	if enemy_index < 0 or enemy_index >= enemies.size():
-		return
-	
-	var enemy := enemies[enemy_index]
-	if enemy["defeated"]:
-		return
-	
-	begin_enemy_orbit_transfer(enemy_index)
 
 
 func open_combat_panel(panel_title: String) -> void:

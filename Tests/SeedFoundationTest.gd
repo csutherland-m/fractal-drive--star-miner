@@ -1,6 +1,7 @@
 extends SceneTree
 
 const TEST_ROW_COUNT := 120
+const EXPECTED_DEFAULT_PLANET_SIGNATURE := "144209399"
 const SeedManagerScript := preload("res://Scripts/SeedManager.gd")
 const SaveManagerScript := preload("res://Scripts/SaveManager.gd")
 
@@ -79,6 +80,7 @@ func run_seed_foundation_tests() -> void:
 	check(first_seeds == second_seeds, "Default run seeds changed between new games.", failures)
 	check(first_galaxy_snapshot == second_galaxy_snapshot, "Galaxy graph changed between new games.", failures)
 	check(first_planet_signature == second_planet_signature, "Starting planet layout changed between new games.", failures)
+	check(first_planet_signature == EXPECTED_DEFAULT_PLANET_SIGNATURE, "Starting planet layout differs from the approved baseline.", failures)
 	check(first_planet_core_cell == second_planet_core_cell, "Planet Core location changed between new games.", failures)
 	check(first_planet_core_cell != Vector2i(-1, -1), "Planet Core was not generated in the test range.", failures)
 	check(first_system_signature == second_system_signature, "Starting local-system layout changed between new games.", failures)
@@ -135,17 +137,22 @@ func run_seed_foundation_tests() -> void:
 		"Tutorial skip was not idempotent or did not unlock the starting interface.",
 		failures
 	)
-	var migrated_tutorial_save: Dictionary = save_manager.migrate_save_data({
-		"save_version": 1,
+	var rejected_old_save: Dictionary = save_manager.validate_save_data({
+		"save_version": SaveManagerScript.SAVE_VERSION - 1,
+		"generator_version": SaveManagerScript.GENERATOR_VERSION,
+		"run_state": {},
+		"scene_state": {},
+	})
+	var accepted_current_save: Dictionary = save_manager.validate_save_data({
+		"save_version": SaveManagerScript.SAVE_VERSION,
 		"generator_version": SaveManagerScript.GENERATOR_VERSION,
 		"run_state": {},
 		"scene_state": {},
 	})
 	check(
-		int(migrated_tutorial_save.get("save_version", 0)) == SaveManagerScript.SAVE_VERSION
-		and str(migrated_tutorial_save.get("run_state", {}).get("tutorial_state", ""))
-			== SeedManagerScript.TUTORIAL_SKIPPED,
-		"Pre-tutorial saves were not safely migrated without replaying First Contact.",
+		rejected_old_save.is_empty()
+		and int(accepted_current_save.get("save_version", 0)) == SaveManagerScript.SAVE_VERSION,
+		"Save validation did not reject the intentionally incompatible schema.",
 		failures
 	)
 	seed_manager.start_new_run()
@@ -299,8 +306,19 @@ func generate_starting_planet_signature() -> String:
 	var guided_cells_are_shallow := guided_starter_cells.all(
 		func(cell: Vector2i): return cell.y >= ground_row and cell.y < ground_row + 5
 	)
+	var lodestone_tracking_matches := true
+	for cell in mining_instance.block_types_by_cell:
+		var is_lodestone: bool = mining_instance.block_types_by_cell[cell] == mining_instance.BlockType.LODESTONE
+		lodestone_tracking_matches = lodestone_tracking_matches and is_lodestone == mining_instance.lodestone_cells.has(cell)
+	for cell in mining_instance.lodestone_cells:
+		lodestone_tracking_matches = (
+			lodestone_tracking_matches
+			and mining_instance.block_types_by_cell.get(cell, mining_instance.BlockType.EMPTY)
+				== mining_instance.BlockType.LODESTONE
+		)
 	var alpha_systems_worked: bool = (
 		onboarding_dialog_worked
+		and lodestone_tracking_matches
 		and guided_starter_cells.size() == 9
 		and guided_cells_are_shallow
 		and is_equal_approx(StartingPlanetBalance.SHALLOW_COPPER_CHANCE, 0.002145)
@@ -529,7 +547,7 @@ func generate_starting_planet_signature() -> String:
 		"miner_mobility_max_speed", "miner_mobility_acceleration",
 		"miner_mobility_vertical_climb", "miner_mobility_kinetic_efficiency",
 		"miner_fuel_cell_capacity", "miner_thermal_heat_dispersion",
-		"miner_life_support_efficiency", "miner_life_support_tolerance",
+		"miner_life_support_efficiency",
 		"miner_shield_capacity", "miner_shield_recharge_delay",
 		"miner_shield_recharge_rate", "miner_shield_efficiency",
 		"miner_structural_integrity", "miner_structural_armor",
@@ -548,12 +566,10 @@ func generate_starting_planet_signature() -> String:
 	var mk_one_upgrades_worked: bool = (
 		all_mk_one_ids_defined
 		and copper_yield_range == Vector2i(3, 10)
-		and gold_yield_range == Vector2i(2, 7)
-		and is_equal_approx(mining_instance.engine_charge_per_second, 864.0)
-		and int(mining_instance.find_upgrade_definition("miner_power_unit_output").get("max_level", 0)) == 5
-		and mining_instance.migrate_saved_capacitor_energy(12.5, 1) == 1250.0
-		and mining_instance.migrate_saved_capacitor_energy(1250.0, mining_instance.POWER_SCALE_VERSION) == 1250.0
-		and is_equal_approx(mining_instance.fuel_consumption_multiplier, pow(1.0 / 1.2, 2))
+			and gold_yield_range == Vector2i(2, 7)
+			and is_equal_approx(mining_instance.engine_charge_per_second, 864.0)
+			and int(mining_instance.find_upgrade_definition("miner_power_unit_output").get("max_level", 0)) == 5
+			and is_equal_approx(mining_instance.fuel_consumption_multiplier, pow(1.0 / 1.2, 2))
 		and is_equal_approx(mining_instance.move_speed, float(mining_instance.base_upgrade_stats["move_speed"]) * pow(1.2, 2))
 		and is_equal_approx(mining_instance.mobility_power_consumption_per_second, 198.0)
 		and mining_instance.armor_rating == 2
@@ -665,21 +681,6 @@ func generate_starting_planet_signature() -> String:
 	)
 	mining_instance.upgrade_levels["miner_drill_efficiency"] = 2
 	alpha_systems_worked = alpha_systems_worked and mining_instance.can_drill_block_type(mining_instance.BlockType.DIAMOND)
-	mining_instance.upgrade_levels = {
-		"miner_fuel_tank": 2,
-		"miner_engine_power": 3,
-		"miner_engine_efficiency": 4,
-		"miner_hull_strength": 5,
-	}
-	mining_instance.migrate_legacy_upgrade_ids()
-	mk_one_upgrades_worked = (
-		mk_one_upgrades_worked
-		and int(mining_instance.upgrade_levels.get("miner_fuel_cell_capacity", 0)) == 2
-		and int(mining_instance.upgrade_levels.get("miner_power_unit_output", 0)) == 3
-		and int(mining_instance.upgrade_levels.get("miner_power_unit_efficiency", 0)) == 4
-		and int(mining_instance.upgrade_levels.get("miner_structural_integrity", 0)) == 5
-		and not mining_instance.upgrade_levels.has("miner_engine_power")
-	)
 	mining_instance.upgrade_levels = {"miner_drill_efficiency": 1}
 	mining_instance.recalculate_stats_from_upgrade_levels()
 	var fuel_rates_correct: bool = (
@@ -797,12 +798,10 @@ func generate_starting_planet_signature() -> String:
 	mining_instance.process_raw_fuel_from_storage()
 	var instant_fuel_processing_worked: bool = (
 		fuel_button_shows_kg
-		and expected_processed_fuel_kg > 0
-		and mining_instance.lander_mining_fuel_kg == expected_processed_fuel_kg
-		and mining_instance.lander_rocket_fuel_tons == mining_instance.rocket_fuel_tons_per_raw_fuel
-		and not mining_instance.fuel_processing_active
-		and is_zero_approx(mining_instance.fuel_processing_remaining_seconds)
-	)
+			and expected_processed_fuel_kg > 0
+			and mining_instance.lander_mining_fuel_kg == expected_processed_fuel_kg
+			and mining_instance.lander_rocket_fuel_tons == mining_instance.rocket_fuel_tons_per_raw_fuel
+		)
 	mining_instance.ammo_fabricator_components = {"explosive_powder": 0, "explosive_casing": 0}
 	mining_instance.ammo_fabricator_stock = {"explosive_charge": 0}
 	mining_instance.miner_ammo = {"explosive_charge": 0}
@@ -1176,6 +1175,18 @@ func generate_starting_planet_signature() -> String:
 		and not mining_hud.hud_warning_active
 		and is_zero_approx(mining_hud.warning_overlay.color.a)
 	)
+	mining_instance.resources["Copper"] = int(mining_instance.resources.get("Copper", 0)) + 1
+	mining_instance.update_hud_cargo_icons()
+	var cargo_nodes_before: Array[Node] = []
+	for cargo_node in mining_instance.hud_cargo_icons.get_children():
+		cargo_nodes_before.append(cargo_node)
+	mining_instance.update_hud_cargo_icons()
+	var cargo_nodes_stable: bool = cargo_nodes_before.size() == mining_instance.hud_cargo_icons.get_child_count()
+	for index in cargo_nodes_before.size():
+		cargo_nodes_stable = (
+			cargo_nodes_stable
+			and cargo_nodes_before[index] == mining_instance.hud_cargo_icons.get_child(index)
+		)
 	last_mining_abilities_worked = (
 		radial_targets.size() == 9
 		and directional_targets_correct
@@ -1223,6 +1234,7 @@ func generate_starting_planet_signature() -> String:
 		and mining_instance.modular_mining_hud.depth_display != null
 		and mining_instance.modular_mining_hud.warning_overlay != null
 		and hud_warning_worked
+		and cargo_nodes_stable
 		and mining_instance.modular_mining_hud.design_root.get_node("Housing").size == MiningHud.DESIGN_SIZE
 		and mining_instance.modular_mining_hud.size.x <= MiningHud.DISPLAY_SIZE.x + 0.1
 		and mining_instance.modular_mining_hud.size.y <= MiningHud.DISPLAY_SIZE.y + 0.1

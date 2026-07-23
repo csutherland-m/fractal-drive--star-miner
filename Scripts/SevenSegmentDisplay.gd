@@ -23,7 +23,10 @@ const DIGIT_SEGMENTS := {
 
 
 func set_value(new_value: int) -> void:
-	displayed_value = maxi(new_value, 0)
+	var clamped_value := maxi(new_value, 0)
+	if displayed_value == clamped_value:
+		return
+	displayed_value = clamped_value
 	queue_redraw()
 
 

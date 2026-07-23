@@ -2,21 +2,14 @@ extends Node
 
 signal save_completed(success: bool, message: String)
 
-const SAVE_VERSION := 2
-const GENERATOR_VERSION := 2
+const SAVE_VERSION := 3
+const GENERATOR_VERSION := 3
 const SLOT_COUNT := 3
-const LEGACY_SAVE_PATH := "user://star_miner_save.json"
-# Compatibility alias for code or test tools that still inspect the old path.
-const SAVE_PATH := LEGACY_SAVE_PATH
 
 var pending_scene_path: String = ""
 var pending_scene_state: Dictionary = {}
 var last_status_message: String = ""
 var active_slot: int = 1
-
-
-func _ready() -> void:
-	migrate_legacy_save_to_slot_one()
 
 
 func is_valid_slot(slot: int) -> bool:
@@ -37,13 +30,6 @@ func set_active_slot(slot: int) -> bool:
 
 func has_save(slot: int = active_slot) -> bool:
 	return is_valid_slot(slot) and FileAccess.file_exists(get_save_path(slot))
-
-
-func has_any_save() -> bool:
-	for slot in range(1, SLOT_COUNT + 1):
-		if has_save(slot):
-			return true
-	return false
 
 
 func delete_save(slot: int) -> bool:
@@ -120,13 +106,15 @@ func read_save_payload(slot: int = active_slot) -> Dictionary:
 	if not parsed is Dictionary:
 		last_status_message = "The save file is invalid."
 		return {}
-	return migrate_save_data(parsed)
+	return validate_save_data(parsed)
 
 
 func get_slot_metadata(slot: int) -> Dictionary:
 	var metadata := {
 		"slot": slot,
 		"occupied": false,
+		"loadable": false,
+		"outdated": false,
 		"label": "Slot %d — Empty" % slot,
 		"saved_unix_time": 0,
 		"tutorial_state": "",
@@ -135,6 +123,7 @@ func get_slot_metadata(slot: int) -> Dictionary:
 	}
 	if not has_save(slot):
 		return metadata
+	metadata["occupied"] = true
 	var file := FileAccess.open(get_save_path(slot), FileAccess.READ)
 	if file == null:
 		metadata["label"] = "Slot %d — Unreadable" % slot
@@ -145,9 +134,13 @@ func get_slot_metadata(slot: int) -> Dictionary:
 		metadata["label"] = "Slot %d — Invalid Save" % slot
 		return metadata
 	var payload: Dictionary = parsed
+	if int(payload.get("save_version", 0)) != SAVE_VERSION:
+		metadata["outdated"] = true
+		metadata["label"] = "Slot %d — Outdated Save" % slot
+		return metadata
 	var run_state: Dictionary = payload.get("run_state", {}) if payload.get("run_state", {}) is Dictionary else {}
 	var saved_time := int(payload.get("saved_unix_time", 0))
-	metadata["occupied"] = true
+	metadata["loadable"] = true
 	metadata["saved_unix_time"] = saved_time
 	metadata["tutorial_state"] = str(run_state.get("tutorial_state", "legacy"))
 	metadata["story_id"] = str(run_state.get("player_story_id", "unselected"))
@@ -169,35 +162,16 @@ func format_saved_time(unix_time: int) -> String:
 	]
 
 
-func migrate_legacy_save_to_slot_one() -> void:
-	if has_save(1) or not FileAccess.file_exists(LEGACY_SAVE_PATH):
-		return
-	var source := FileAccess.open(LEGACY_SAVE_PATH, FileAccess.READ)
-	if source == null:
-		return
-	var contents := source.get_as_text()
-	source.close()
-	var destination := FileAccess.open(get_save_path(1), FileAccess.WRITE)
-	if destination == null:
-		return
-	destination.store_string(contents)
-	destination.close()
-	# The copy is now safely in Slot 1; remove the legacy source so clearing or
-	# restarting Slot 1 later cannot resurrect an obsolete save.
-	if FileAccess.file_exists(get_save_path(1)):
-		DirAccess.remove_absolute(ProjectSettings.globalize_path(LEGACY_SAVE_PATH))
-
-
 func apply_save_payload(payload: Dictionary) -> bool:
-	var migrated := migrate_save_data(payload)
-	if migrated.is_empty():
+	var validated := validate_save_data(payload)
+	if validated.is_empty():
 		return false
-	var scene_path := str(migrated.get("scene_path", ""))
+	var scene_path := str(validated.get("scene_path", ""))
 	if scene_path.is_empty() or not ResourceLoader.exists(scene_path):
 		last_status_message = "The saved scene is unavailable."
 		return false
-	var run_state: Variant = migrated.get("run_state", {})
-	var scene_state: Variant = migrated.get("scene_state", {})
+	var run_state: Variant = validated.get("run_state", {})
+	var scene_state: Variant = validated.get("scene_state", {})
 	if not run_state is Dictionary or not scene_state is Dictionary:
 		last_status_message = "The save file contains invalid state data."
 		return false
@@ -212,23 +186,12 @@ func apply_save_payload(payload: Dictionary) -> bool:
 	return true
 
 
-func migrate_save_data(payload: Dictionary) -> Dictionary:
+func validate_save_data(payload: Dictionary) -> Dictionary:
 	var version := int(payload.get("save_version", 0))
-	if version <= 0 or version > SAVE_VERSION:
-		last_status_message = "Unsupported save version: %d." % version
+	if version != SAVE_VERSION:
+		last_status_message = "Save version %d is incompatible with version %d." % [version, SAVE_VERSION]
 		return {}
-	var migrated := payload.duplicate(true)
-	if version == 1:
-		var run_state: Dictionary = migrated.get("run_state", {}).duplicate(true)
-		run_state["tutorial_schema_version"] = 1
-		run_state["player_story_id"] = "unselected"
-		run_state["tutorial_state"] = "skipped"
-		run_state["tutorial_step_id"] = ""
-		run_state["tutorial_dialogue_node_id"] = ""
-		run_state["completed_tutorial_step_ids"] = []
-		migrated["run_state"] = run_state
-		migrated["save_version"] = 2
-	return migrated
+	return payload.duplicate(true)
 
 
 func consume_pending_scene_state(scene_path: String) -> Dictionary:

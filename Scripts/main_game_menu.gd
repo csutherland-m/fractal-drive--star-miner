@@ -73,15 +73,23 @@ func refresh_save_slots() -> void:
 		var metadata := SaveManager.get_slot_metadata(slot)
 		var button := slot_buttons[index]
 		button.set_pressed_no_signal(slot == selected_slot)
-		button.text = "Slot %d\n%s" % [slot, "Saved" if bool(metadata["occupied"]) else "Empty"]
+		var slot_state := "Empty"
+		if bool(metadata["occupied"]):
+			slot_state = "Saved" if bool(metadata["loadable"]) else (
+				"Outdated" if bool(metadata["outdated"]) else "Unavailable"
+			)
+		button.text = "Slot %d\n%s" % [slot, slot_state]
 	var selected_metadata := SaveManager.get_slot_metadata(selected_slot)
 	var occupied := bool(selected_metadata["occupied"])
-	continue_button.disabled = not occupied
+	var loadable := bool(selected_metadata["loadable"])
+	continue_button.disabled = not loadable
 	continue_button.text = "Continue Slot %d" % selected_slot
 	play_button.text = ("Restart Slot %d" if occupied else "New Game in Slot %d") % selected_slot
-	if occupied:
+	if loadable:
 		var tutorial_state := str(selected_metadata.get("tutorial_state", "legacy")).replace("_", " ").capitalize()
 		slot_details_label.text = "%s\nTutorial: %s" % [selected_metadata["label"], tutorial_state]
+	elif occupied:
+		slot_details_label.text = "%s\nRestart this slot to begin a compatible run." % selected_metadata["label"]
 	else:
 		slot_details_label.text = "Slot %d is empty and ready for a new game." % selected_slot
 

@@ -39,7 +39,6 @@ var starting_system_seed: int = 0
 var starting_planet_seed: int = 0
 
 var starting_scenario_state: StartingScenarioState = StartingScenarioState.STARTING_STRANDED
-var cargo_hauler_intro_shown: bool = false
 var starship_escape_fuel_tons: int = 0
 var galaxy_systems: Array[Dictionary] = []
 var galaxy_systems_by_id: Dictionary = {}
@@ -66,7 +65,6 @@ func start_new_run(seed_text: String = DEFAULT_SEED_TEXT) -> void:
 	# resources and progression can be balanced without a bad-seed failure.
 	starting_planet_seed = FIXED_STARTING_PLANET_SEED
 	starting_scenario_state = StartingScenarioState.STARTING_STRANDED
-	cargo_hauler_intro_shown = false
 	starship_escape_fuel_tons = 0
 	current_system_id = STARTING_SYSTEM_ID
 	selected_system_path = [STARTING_SYSTEM_ID]
@@ -238,22 +236,6 @@ func select_next_system(system_id: String) -> bool:
 	return true
 
 
-func print_available_next_systems() -> void:
-	var current_system := get_current_system()
-	print("Available systems after %s:" % current_system.get("display_name", current_system_id))
-	for system_data in get_available_next_systems():
-		print(
-			"- %s [%s], depth %d, difficulty %d, demon=%s"
-			% [
-				system_data["display_name"],
-				system_data["system_id"],
-				system_data["path_depth"],
-				system_data["difficulty_tier"],
-				str(system_data["is_demon_system"]),
-			]
-		)
-
-
 func enter_starting_planet() -> void:
 	if starting_scenario_state == StartingScenarioState.STARTING_STRANDED:
 		starting_scenario_state = StartingScenarioState.MINING_FOR_ESCAPE_FUEL
@@ -280,14 +262,6 @@ func is_starting_scenario_active() -> bool:
 	return starting_scenario_state != StartingScenarioState.GALAXY_MAP_UNLOCKED
 
 
-func should_show_cargo_hauler_intro() -> bool:
-	return is_starting_scenario_active() and not cargo_hauler_intro_shown
-
-
-func mark_cargo_hauler_intro_shown() -> void:
-	cargo_hauler_intro_shown = true
-
-
 func set_player_story(story_id: String) -> void:
 	if story_id in [STORY_RAGS_TO_RICHES, STORY_PROVE_DADDY_WRONG, STORY_LONE_MINER]:
 		player_story_id = story_id
@@ -307,7 +281,6 @@ func set_tutorial_step(step_id: String, mark_previous_complete: bool = true) -> 
 func begin_guided_tutorial() -> void:
 	tutorial_state = TUTORIAL_ACTIVE
 	set_tutorial_step(STEP_FIRST_MINING_OBJECTIVE)
-	cargo_hauler_intro_shown = true
 
 
 func skip_tutorial() -> void:
@@ -318,7 +291,6 @@ func skip_tutorial() -> void:
 	tutorial_state = TUTORIAL_SKIPPED
 	tutorial_step_id = ""
 	tutorial_dialogue_node_id = ""
-	cargo_hauler_intro_shown = true
 
 
 func is_tutorial_parked_or_finished() -> bool:
@@ -340,57 +312,6 @@ func should_start_first_contact() -> bool:
 	)
 
 
-func get_cargo_hauler_intro_pages() -> Array[String]:
-	return [
-		(
-			"Howdy, greenhorn. Welcome to Quiet Reach.\n\n"
-			+ "I'm the cargo hauler assigned to this patch of nowhere. I'll keep an eye on your operation "
-			+ "and send down equipment when you've proved you know which end of the drill goes in the dirt."
-		),
-		(
-			"You must be new to this whole mining thing, so here's how you handle that rig:\n\n"
-			+ "A / D or Left / Right: drive and drill sideways\n"
-			+ "S or Down: drill downward\n"
-			+ "W, Up, or Space: fire your upward thrusters\n"
-			+ "Left Mouse: fire the mining laser\n"
-			+ "Q: radial explosive blast    E: directional explosive blast\n"
-			+ "F: interact or ride a lift    L: plan a lift after fabrication unlocks\n"
-			+ "I: open miner inventory and dump unwanted cargo one unit at a time\n"
-			+ "R: place a fabricated GPS shaft marker\n"
-			+ "M: open the explored planet map; drag or use arrows to pan, mouse wheel to zoom\n"
-			+ "Esc: close the whole menu or overlay\n"
-			+ "Pause / Break: go back one menu (rebind it in Settings)"
-		),
-		(
-			"Now here's the job, yahoo: you're gonna want to get down there, find some fuel and ore, "
-			+ "and haul it back up to the surface. Use what you bring home to upgrade your gear, fabricate "
-			+ "better parts, and push that shaft deeper.\n\n"
-			+ "Once you get down a bit farther, I'll check back in and show you a few tricks for getting real rich. "
-			+ "For now, keep one eye on your fuel gauge and the other on your cargo hold. A full hold means "
-			+ "it's time to haul your riches home, and an empty fuel tank means game over—stuck down there to die "
-			+ "alone in the depths of an alien world. Don't let a shiny rock talk you into a one-way trip."
-		),
-	]
-
-
-func get_cargo_hauler_intro_text() -> String:
-	# Compatibility helper for callers that still expect one combined message.
-	return "\n\n".join(get_cargo_hauler_intro_pages())
-
-
-func get_cargo_hauler_shallow_scan_text() -> String:
-	return (
-		"Shallow scan coming through, greenhorn. I've tagged your first three copper, iron, and raw-fuel "
-		+ "blocks with pixie dust to get you pointed toward payday.\n\n"
-		+ "There's a richer spread of copper and iron in the first 300 meters, too. Follow the sparkle, "
-		+ "mind your fuel and cargo, and bring the haul back to the surface."
-	)
-
-
-func get_starting_scenario_state_name() -> String:
-	return StartingScenarioState.keys()[starting_scenario_state]
-
-
 func create_save_data() -> Dictionary:
 	return {
 		"run_seed_text": run_seed_text,
@@ -399,7 +320,6 @@ func create_save_data() -> Dictionary:
 		"starting_system_seed": starting_system_seed,
 		"starting_planet_seed": starting_planet_seed,
 		"starting_scenario_state": int(starting_scenario_state),
-		"cargo_hauler_intro_shown": cargo_hauler_intro_shown,
 		"starship_escape_fuel_tons": starship_escape_fuel_tons,
 		"galaxy_systems": galaxy_systems.duplicate(true),
 		"selected_system_path": selected_system_path.duplicate(),
@@ -426,7 +346,6 @@ func apply_save_data(data: Dictionary) -> void:
 		StartingScenarioState.STARTING_STRANDED,
 		StartingScenarioState.GALAXY_MAP_UNLOCKED
 	) as StartingScenarioState
-	cargo_hauler_intro_shown = bool(data.get("cargo_hauler_intro_shown", false))
 	starship_escape_fuel_tons = maxi(int(data.get("starship_escape_fuel_tons", 0)), 0)
 	galaxy_systems.clear()
 	galaxy_systems_by_id.clear()
