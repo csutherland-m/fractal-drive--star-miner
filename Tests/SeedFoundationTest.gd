@@ -205,7 +205,40 @@ func generate_starting_planet_signature() -> String:
 	)
 	mining_instance._on_tutorial_continue_requested()
 	mining_instance._on_tutorial_continue_requested()
-	onboarding_dialog_worked = onboarding_dialog_worked and mining_instance.tutorial_overlay.choice_box.get_child_count() == 3
+	await process_frame
+	await process_frame
+	var tutorial_short_button_fits: bool = (
+		mining_instance.tutorial_overlay.continue_button.size.x
+			<= mining_instance.tutorial_overlay.TUTORIAL_BUTTON_MAX_SIZE.x
+		and mining_instance.tutorial_overlay.continue_button.size.y
+			<= mining_instance.tutorial_overlay.TUTORIAL_BUTTON_MAX_SIZE.y
+	)
+	var first_response_button := (
+		mining_instance.tutorial_overlay.choice_box.get_child(0) as Button
+	)
+	var tutorial_responses_match := first_response_button != null
+	for choice_button_value in mining_instance.tutorial_overlay.choice_box.get_children():
+		var choice_button := choice_button_value as Button
+		tutorial_responses_match = (
+			tutorial_responses_match
+			and choice_button != null
+			and choice_button.size == first_response_button.size
+			and choice_button.size.x
+				> mining_instance.tutorial_overlay.TUTORIAL_BUTTON_MAX_SIZE.x
+			and choice_button.autowrap_mode == TextServer.AUTOWRAP_WORD_SMART
+		)
+	onboarding_dialog_worked = (
+		onboarding_dialog_worked
+		and mining_instance.tutorial_overlay.choice_box.get_child_count() == 3
+		and mining_instance.tutorial_overlay.dialogue_portrait.size.x
+			== mining_instance.tutorial_overlay.dialogue_portrait.size.y
+		and is_equal_approx(
+			mining_instance.tutorial_overlay.dialogue_panel.anchor_left,
+			mining_instance.tutorial_overlay.RESPONSE_DIALOGUE_LEFT
+		)
+		and tutorial_short_button_fits
+		and tutorial_responses_match
+	)
 	mining_instance._on_tutorial_choice_selected("story_rags_to_riches")
 	mining_instance._on_tutorial_continue_requested()
 	mining_instance._on_tutorial_choice_selected("accept_tutorial")
@@ -235,6 +268,10 @@ func generate_starting_planet_signature() -> String:
 		onboarding_dialog_worked
 		and seed_manager.tutorial_step_id == SeedManagerScript.STEP_UI_REFUEL
 		and not mining_instance.refuel_button.disabled
+		and mining_instance.refuel_button.theme
+			== mining_instance.get_tutorial_active_button_theme()
+		and mining_instance.refuel_button.mouse_default_cursor_shape
+			== Control.CURSOR_POINTING_HAND
 		and mining_instance.repair_hull_button.disabled
 	)
 	mining_instance._on_refuel_pressed()

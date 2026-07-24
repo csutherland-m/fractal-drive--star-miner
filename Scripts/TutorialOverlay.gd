@@ -5,6 +5,17 @@ signal continue_requested
 signal choice_selected(choice_id: String)
 
 const HIGHLIGHT_COLOR := Color(1.0, 0.84, 0.08, 1.0)
+const TUTORIAL_BUTTON_MAX_SIZE := Vector2(300.0, 150.0)
+const DIALOGUE_PORTRAIT_SIZE := 112.0
+const ACTION_PORTRAIT_SIZE := 88.0
+const SPEAKER_FONT_SIZE := 20
+const DIALOGUE_FONT_SIZE := 19
+const ACTION_FONT_SIZE := 17
+const BUTTON_FONT_SIZE := 20
+const STANDARD_DIALOGUE_LEFT := 0.20
+const STANDARD_DIALOGUE_RIGHT := 0.80
+const RESPONSE_DIALOGUE_LEFT := 0.05
+const RESPONSE_DIALOGUE_RIGHT := 0.75
 
 var root: Control
 var full_blocker: ColorRect
@@ -13,11 +24,13 @@ var highlight_panels: Array[Panel] = []
 var dialogue_panel: Panel
 var speaker_label: Label
 var dialogue_label: Label
+var dialogue_portrait: Panel
 var choice_box: VBoxContainer
 var continue_button: Button
 var action_panel: Panel
 var action_speaker_label: Label
 var action_label: Label
+var action_portrait: Panel
 var objective_panel: Panel
 var objective_label: Label
 var active_target: Control
@@ -76,7 +89,7 @@ func build_overlay() -> void:
 	objective_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	objective_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	objective_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	objective_label.add_theme_font_size_override("font_size", 20)
+	objective_label.add_theme_font_size_override("font_size", 18)
 	objective_label.add_theme_color_override("font_color", Color.WHITE)
 	objective_label.add_theme_color_override("font_outline_color", Color.BLACK)
 	objective_label.add_theme_constant_override("outline_size", 4)
@@ -84,64 +97,76 @@ func build_overlay() -> void:
 
 	dialogue_panel = Panel.new()
 	dialogue_panel.name = "TutorialDialogue"
-	dialogue_panel.anchor_left = 0.14
-	dialogue_panel.anchor_right = 0.86
-	dialogue_panel.anchor_top = 0.27
-	dialogue_panel.anchor_bottom = 0.94
+	dialogue_panel.anchor_left = STANDARD_DIALOGUE_LEFT
+	dialogue_panel.anchor_right = STANDARD_DIALOGUE_RIGHT
+	dialogue_panel.anchor_top = 0.35
+	dialogue_panel.anchor_bottom = 0.90
 	dialogue_panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	dialogue_panel.theme = GameTheme.create_button_theme()
 	dialogue_panel.add_theme_stylebox_override("panel", create_panel_style(Color(0.035, 0.065, 0.085, 0.98), HIGHLIGHT_COLOR, 4))
 	root.add_child(dialogue_panel)
-	var dialogue_box := VBoxContainer.new()
+	var dialogue_box := HBoxContainer.new()
 	dialogue_box.anchor_right = 1.0
 	dialogue_box.anchor_bottom = 1.0
-	dialogue_box.offset_left = 28.0
-	dialogue_box.offset_top = 20.0
-	dialogue_box.offset_right = -28.0
-	dialogue_box.offset_bottom = -20.0
-	dialogue_box.add_theme_constant_override("separation", 14)
+	dialogue_box.offset_left = 24.0
+	dialogue_box.offset_top = 18.0
+	dialogue_box.offset_right = -24.0
+	dialogue_box.offset_bottom = -18.0
+	dialogue_box.add_theme_constant_override("separation", 20)
 	dialogue_panel.add_child(dialogue_box)
+	dialogue_portrait = create_portrait_placeholder(DIALOGUE_PORTRAIT_SIZE)
+	dialogue_box.add_child(dialogue_portrait)
+	var dialogue_content := VBoxContainer.new()
+	dialogue_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	dialogue_content.add_theme_constant_override("separation", 12)
+	dialogue_box.add_child(dialogue_content)
 	speaker_label = create_speaker_label()
-	dialogue_box.add_child(speaker_label)
+	dialogue_content.add_child(speaker_label)
 	dialogue_label = create_dialogue_label()
-	dialogue_box.add_child(dialogue_label)
+	dialogue_content.add_child(dialogue_label)
 	choice_box = VBoxContainer.new()
 	choice_box.add_theme_constant_override("separation", 9)
-	dialogue_box.add_child(choice_box)
+	dialogue_content.add_child(choice_box)
 	continue_button = Button.new()
 	continue_button.text = "Continue"
-	continue_button.custom_minimum_size.y = 52.0
+	configure_tutorial_button(continue_button)
 	continue_button.pressed.connect(func(): continue_requested.emit())
-	dialogue_box.add_child(continue_button)
+	dialogue_content.add_child(continue_button)
 
 	action_panel = Panel.new()
 	action_panel.name = "TutorialActionPrompt"
-	action_panel.anchor_left = 0.18
-	action_panel.anchor_right = 0.82
-	action_panel.anchor_top = 0.76
-	action_panel.anchor_bottom = 0.95
+	action_panel.anchor_left = 0.24
+	action_panel.anchor_right = 0.76
+	action_panel.anchor_top = 0.77
+	action_panel.anchor_bottom = 0.94
 	action_panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	action_panel.add_theme_stylebox_override("panel", create_panel_style(Color(0.035, 0.065, 0.085, 0.97), HIGHLIGHT_COLOR, 4))
 	root.add_child(action_panel)
-	var action_box := VBoxContainer.new()
+	var action_box := HBoxContainer.new()
 	action_box.anchor_right = 1.0
 	action_box.anchor_bottom = 1.0
-	action_box.offset_left = 26.0
-	action_box.offset_top = 16.0
-	action_box.offset_right = -26.0
-	action_box.offset_bottom = -16.0
-	action_box.add_theme_constant_override("separation", 8)
+	action_box.offset_left = 22.0
+	action_box.offset_top = 14.0
+	action_box.offset_right = -22.0
+	action_box.offset_bottom = -14.0
+	action_box.add_theme_constant_override("separation", 18)
 	action_panel.add_child(action_box)
+	action_portrait = create_portrait_placeholder(ACTION_PORTRAIT_SIZE)
+	action_box.add_child(action_portrait)
+	var action_content := VBoxContainer.new()
+	action_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	action_content.add_theme_constant_override("separation", 6)
+	action_box.add_child(action_content)
 	action_speaker_label = create_speaker_label()
-	action_box.add_child(action_speaker_label)
+	action_content.add_child(action_speaker_label)
 	action_label = create_dialogue_label()
-	action_label.add_theme_font_size_override("font_size", 19)
-	action_box.add_child(action_label)
+	action_label.add_theme_font_size_override("font_size", ACTION_FONT_SIZE)
+	action_content.add_child(action_label)
 
 
 func create_speaker_label() -> Label:
 	var label := Label.new()
-	label.add_theme_font_size_override("font_size", 22)
+	label.add_theme_font_size_override("font_size", SPEAKER_FONT_SIZE)
 	label.add_theme_color_override("font_color", HIGHLIGHT_COLOR)
 	label.add_theme_color_override("font_outline_color", Color.BLACK)
 	label.add_theme_constant_override("outline_size", 4)
@@ -152,11 +177,53 @@ func create_dialogue_label() -> Label:
 	var label := Label.new()
 	label.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	label.add_theme_font_size_override("font_size", 21)
+	label.add_theme_font_size_override("font_size", DIALOGUE_FONT_SIZE)
 	label.add_theme_color_override("font_color", Color.WHITE)
 	label.add_theme_color_override("font_outline_color", Color.BLACK)
 	label.add_theme_constant_override("outline_size", 3)
 	return label
+
+
+func create_portrait_placeholder(square_size: float) -> Panel:
+	var portrait := Panel.new()
+	portrait.name = "MinerPortraitPlaceholder"
+	portrait.custom_minimum_size = Vector2(square_size, square_size)
+	portrait.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	portrait.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	portrait.add_theme_stylebox_override(
+		"panel",
+		create_panel_style(Color(0.055, 0.10, 0.13, 1.0), Color(0.40, 0.56, 0.62, 1.0), 2)
+	)
+	var placeholder_label := Label.new()
+	placeholder_label.anchor_right = 1.0
+	placeholder_label.anchor_bottom = 1.0
+	placeholder_label.text = "MINER\nPORTRAIT"
+	placeholder_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	placeholder_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	placeholder_label.add_theme_font_size_override("font_size", 12)
+	placeholder_label.add_theme_color_override("font_color", Color(0.62, 0.75, 0.79, 1.0))
+	portrait.add_child(placeholder_label)
+	return portrait
+
+
+func configure_tutorial_button(button: Button, is_response: bool = false) -> void:
+	button.custom_minimum_size = Vector2(
+		0.0 if is_response else TUTORIAL_BUTTON_MAX_SIZE.x,
+		52.0
+	)
+	button.size_flags_horizontal = (
+		Control.SIZE_EXPAND_FILL if is_response else Control.SIZE_SHRINK_CENTER
+	)
+	button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	var compact_theme := GameTheme.create_button_theme()
+	compact_theme.set_font_size("font_size", "Button", BUTTON_FONT_SIZE)
+	for style_name in ["normal", "hover", "pressed", "disabled"]:
+		var style := compact_theme.get_stylebox(style_name, "Button") as StyleBoxFlat
+		style.content_margin_left = 4.0
+		style.content_margin_right = 4.0
+		style.content_margin_top = 3.0
+		style.content_margin_bottom = 3.0
+	button.theme = compact_theme
 
 
 func create_panel_style(background: Color, border: Color, width: int) -> StyleBoxFlat:
@@ -184,6 +251,12 @@ func show_dialogue(
 	action_panel.visible = false
 	active_target = null
 	highlighted_targets = targets
+	dialogue_panel.anchor_left = (
+		RESPONSE_DIALOGUE_LEFT if not choices.is_empty() else STANDARD_DIALOGUE_LEFT
+	)
+	dialogue_panel.anchor_right = (
+		RESPONSE_DIALOGUE_RIGHT if not choices.is_empty() else STANDARD_DIALOGUE_RIGHT
+	)
 	speaker_label.text = speaker
 	dialogue_label.text = text
 	clear_children(choice_box)
@@ -195,17 +268,35 @@ func show_dialogue(
 		var choice: Dictionary = choice_value
 		var button := Button.new()
 		button.text = str(choice.get("text", "Continue"))
-		button.custom_minimum_size.y = 52.0
-		button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		configure_tutorial_button(button, true)
 		button.pressed.connect(
 			func(): choice_selected.emit(str(choice.get("id", "")))
 		)
 		choice_box.add_child(button)
+	equalize_response_button_sizes()
 	refresh_highlights()
 	if continue_button.visible:
 		continue_button.grab_focus()
 	elif choice_box.get_child_count() > 0:
 		(choice_box.get_child(0) as Button).grab_focus()
+
+
+func equalize_response_button_sizes() -> void:
+	await get_tree().process_frame
+	if choice_box == null or choice_box.get_child_count() == 0:
+		return
+	var longest_response_height := 52.0
+	for child in choice_box.get_children():
+		var button := child as Button
+		if button != null:
+			longest_response_height = maxf(
+				longest_response_height,
+				button.size.y
+			)
+	for child in choice_box.get_children():
+		var button := child as Button
+		if button != null:
+			button.custom_minimum_size.y = longest_response_height
 
 
 func show_action_prompt(

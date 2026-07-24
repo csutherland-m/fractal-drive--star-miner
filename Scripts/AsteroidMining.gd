@@ -348,6 +348,7 @@ var tutorial_overlay: TutorialOverlay
 var tutorial_ui_targets: Dictionary = {}
 var tutorial_allowed_action_id: String = ""
 var tutorial_saved_button_states: Dictionary = {}
+var tutorial_active_button_theme: Theme
 var tutorial_dialogue_was_paused: bool = false
 var tutorial_dialogue_active: bool = false
 
@@ -869,19 +870,69 @@ func apply_tutorial_ui_gate(allowed_action_id: String) -> void:
 		return
 	var allowed := get_tutorial_target(allowed_action_id)
 	for button in find_buttons_recursive(shop_panel):
-		tutorial_saved_button_states[button] = button.disabled
+		tutorial_saved_button_states[button] = {
+			"disabled": button.disabled,
+			"focus_mode": button.focus_mode,
+			"theme": button.theme,
+			"cursor": button.mouse_default_cursor_shape,
+		}
 		button.disabled = button != allowed
 		button.focus_mode = Control.FOCUS_ALL if button == allowed else Control.FOCUS_NONE
+		if button == allowed:
+			button.theme = get_tutorial_active_button_theme()
+			button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 
 
 func release_tutorial_ui_gate() -> void:
 	for button_value in tutorial_saved_button_states.keys():
 		if is_instance_valid(button_value):
 			var button := button_value as Button
-			button.disabled = bool(tutorial_saved_button_states[button_value])
-			button.focus_mode = Control.FOCUS_ALL
+			var saved_state: Dictionary = tutorial_saved_button_states[button_value]
+			button.disabled = bool(saved_state.get("disabled", false))
+			button.focus_mode = int(saved_state.get("focus_mode", Control.FOCUS_ALL))
+			button.theme = saved_state.get("theme") as Theme
+			button.mouse_default_cursor_shape = int(
+				saved_state.get("cursor", Control.CURSOR_ARROW)
+			)
 	tutorial_saved_button_states.clear()
 	tutorial_allowed_action_id = ""
+
+
+func get_tutorial_active_button_theme() -> Theme:
+	if tutorial_active_button_theme != null:
+		return tutorial_active_button_theme
+	tutorial_active_button_theme = GameTheme.create_button_theme()
+	tutorial_active_button_theme.set_stylebox(
+		"normal",
+		"Button",
+		GameTheme.create_button_style(
+			Color("#F4D65E"),
+			Color("#FFF0A3"),
+			Color("#4A3510")
+		)
+	)
+	tutorial_active_button_theme.set_stylebox(
+		"hover",
+		"Button",
+		GameTheme.create_button_style(
+			Color("#FFE985"),
+			Color("#FFF7C7"),
+			Color("#4A3510")
+		)
+	)
+	tutorial_active_button_theme.set_stylebox(
+		"pressed",
+		"Button",
+		GameTheme.create_button_style(
+			Color("#C89B28"),
+			Color("#FFE985"),
+			Color("#211806")
+		)
+	)
+	tutorial_active_button_theme.set_color("font_color", "Button", Color("#241A05"))
+	tutorial_active_button_theme.set_color("font_hover_color", "Button", Color("#171003"))
+	tutorial_active_button_theme.set_color("font_focus_color", "Button", Color("#241A05"))
+	return tutorial_active_button_theme
 
 
 func find_buttons_recursive(node: Node) -> Array[Button]:
